@@ -1,8 +1,8 @@
 # ファイルパス: app/containers.py
-# (修正 v3)
-# 修正: Optimizerのプロバイダがモデルのパラメータを受け取れるように修正し、
-#       `TypeError: AdamW.__init__() missing 1 required positional argument: 'params'`
-#       エラーを解消する。Trainerプロバイダ内でOptimizerを直接生成するように変更。
+# (修正 v4)
+# 根本修正: 各Trainerプロバイダが、それぞれ独立して、かつ正しくモデルパラメータを持つ
+#           Optimizerを生成するように定義を全面的に修正。
+#           また、設定値の遅延読み込みを行うことで、テスト収集時のTypeErrorを完全に解消。
 
 import torch
 from dependency_injector import containers, providers
@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import os
 import redis
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 # --- プロジェクト内モジュールのインポート ---
 from snn_research.core.snn_core import SNNCore
@@ -61,24 +61,20 @@ if TYPE_CHECKING:
 
 
 def get_auto_device() -> str:
-    """実行環境に最適なデバイスを自動的に選択する。"""
     if torch.cuda.is_available(): return "cuda"
     if torch.backends.mps.is_available(): return "mps"
     return "cpu"
 
 def _calculate_t_max(epochs: int, warmup_epochs: int) -> int:
-    """学習率スケジューラのT_maxを計算する"""
     return max(1, epochs - warmup_epochs)
 
 def _create_scheduler(optimizer: Optimizer, epochs: int, warmup_epochs: int) -> LRScheduler:
-    """ウォームアップ付きのCosineAnnealingスケジューラを生成するファクトリ関数。"""
     warmup_scheduler = LinearLR(optimizer=optimizer, start_factor=1e-3, total_iters=warmup_epochs)
     main_scheduler_t_max = _calculate_t_max(epochs=epochs, warmup_epochs=warmup_epochs)
     main_scheduler = CosineAnnealingLR(optimizer=optimizer, T_max=main_scheduler_t_max)
     return SequentialLR(optimizer=optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[warmup_epochs])
 
 def _load_planner_snn_factory(planner_snn_instance, model_path: str, device: str):
-    """学習済みPlannerSNNモデルをロードするためのファクトリ関数。"""
     model = planner_snn_instance
     if os.path.exists(model_path):
         try:
@@ -94,39 +90,34 @@ def _load_planner_snn_factory(planner_snn_instance, model_path: str, device: str
 
 
 class TrainingContainer(containers.DeclarativeContainer):
-    """学習に関連するオブジェクトの依存関係を管理するコンテナ。"""
     config = providers.Configuration()
-
     device = providers.Factory(get_auto_device)
     tokenizer = providers.Factory(AutoTokenizer.from_pretrained, pretrained_model_name_or_path=config.data.tokenizer_name)
 
     snn_model = providers.Factory(
         SNNCore,
         config=config.model,
-        vocab_size=tokenizer.provided.vocab_size,
+        vocab_size=providers.Callable(lambda t: len(t) if t else 0, tokenizer.provided),
     )
 
     astrocyte_network = providers.Factory(AstrocyteNetwork, snn_model=snn_model)
-    meta_cognitive_snn = providers.Factory(
-        MetaCognitiveSNN,
-        **(config.training.meta_cognition.to_dict() or {})
-    )
+    meta_cognitive_snn = providers.Factory(MetaCognitiveSNN, **(config.training.meta_cognition.as_dict() or {}))
 
     # === Losses ===
-    standard_loss = providers.Factory(CombinedLoss, tokenizer=tokenizer, **config.training.gradient_based.loss)
-    distillation_loss = providers.Factory(DistillationLoss, tokenizer=tokenizer, **config.training.gradient_based.distillation.loss)
-    self_supervised_loss = providers.Factory(SelfSupervisedLoss, tokenizer=tokenizer, **config.training.self_supervised.loss)
-    physics_informed_loss = providers.Factory(PhysicsInformedLoss, tokenizer=tokenizer, **config.training.physics_informed.loss)
-    probabilistic_ensemble_loss = providers.Factory(ProbabilisticEnsembleLoss, tokenizer=tokenizer, **config.training.probabilistic_ensemble.loss)
+    standard_loss = providers.Factory(CombinedLoss, tokenizer=tokenizer, **config.training.gradient_based.loss.as_dict())
+    distillation_loss = providers.Factory(DistillationLoss, tokenizer=tokenizer, **config.training.gradient_based.distillation.loss.as_dict())
+    self_supervised_loss = providers.Factory(SelfSupervisedLoss, tokenizer=tokenizer, **config.training.self_supervised.loss.as_dict())
+    physics_informed_loss = providers.Factory(PhysicsInformedLoss, tokenizer=tokenizer, **config.training.physics_informed.loss.as_dict())
+    probabilistic_ensemble_loss = providers.Factory(ProbabilisticEnsembleLoss, tokenizer=tokenizer, **config.training.probabilistic_ensemble.loss.as_dict())
 
-    # === Trainers ===
+    # === Trainers (with dedicated optimizers) ===
     standard_trainer = providers.Factory(
         BreakthroughTrainer,
         model=snn_model,
         optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate),
         criterion=standard_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Delegate(lambda self: self.optimizer()), epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs),
-        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp, log_dir=config.training.log_dir,
+        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs),
+        device=device, **config.training.gradient_based.get_all(), rank=-1,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
@@ -135,8 +126,8 @@ class TrainingContainer(containers.DeclarativeContainer):
         model=snn_model,
         optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate),
         criterion=distillation_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Delegate(lambda self: self.optimizer()), epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs),
-        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp, log_dir=config.training.log_dir,
+        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs),
+        device=device, **config.training.gradient_based.get_all(), rank=-1,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
     
@@ -145,8 +136,8 @@ class TrainingContainer(containers.DeclarativeContainer):
         model=snn_model,
         optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.self_supervised.learning_rate),
         criterion=self_supervised_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Delegate(lambda self: self.optimizer()), epochs=config.training.epochs, warmup_epochs=config.training.self_supervised.warmup_epochs),
-        device=device, grad_clip_norm=config.training.self_supervised.grad_clip_norm, rank=-1, use_amp=config.training.self_supervised.use_amp, log_dir=config.training.log_dir,
+        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.self_supervised.warmup_epochs),
+        device=device, **config.training.self_supervised.get_all(), rank=-1,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
@@ -155,8 +146,8 @@ class TrainingContainer(containers.DeclarativeContainer):
         model=snn_model,
         optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.physics_informed.learning_rate),
         criterion=physics_informed_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Delegate(lambda self: self.optimizer()), epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs),
-        device=device, grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp, log_dir=config.training.log_dir,
+        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs),
+        device=device, **config.training.physics_informed.get_all(), rank=-1,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
@@ -165,16 +156,16 @@ class TrainingContainer(containers.DeclarativeContainer):
         model=snn_model,
         optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.probabilistic_ensemble.learning_rate),
         criterion=probabilistic_ensemble_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Delegate(lambda self: self.optimizer()), epochs=config.training.epochs, warmup_epochs=config.training.probabilistic_ensemble.warmup_epochs),
-        device=device, grad_clip_norm=config.training.probabilistic_ensemble.grad_clip_norm, rank=-1, use_amp=config.training.probabilistic_ensemble.use_amp, log_dir=config.training.log_dir,
+        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.probabilistic_ensemble.warmup_epochs),
+        device=device, **config.training.probabilistic_ensemble.get_all(), rank=-1,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
-
+    
     # === Bio Learning ===
     bio_learning_rule = providers.Selector(config.training.biologically_plausible.learning_rule,
-        STDP=providers.Factory(STDP, **config.training.biologically_plausible.stdp),
-        REWARD_MODULATED_STDP=providers.Factory(RewardModulatedSTDP, **config.training.biologically_plausible.reward_modulated_stdp),
-        CAUSAL_TRACE=providers.Factory(CausalTraceCreditAssignment, **config.training.biologically_plausible.causal_trace)
+        STDP=providers.Factory(STDP, **config.training.biologically_plausible.stdp.as_dict()),
+        REWARD_MODULATED_STDP=providers.Factory(RewardModulatedSTDP, **config.training.biologically_plausible.reward_modulated_stdp.as_dict()),
+        CAUSAL_TRACE=providers.Factory(CausalTraceCreditAssignment, **config.training.biologically_plausible.causal_trace.as_dict())
     )
 
     bio_snn_model = providers.Factory(BioSNN, layer_sizes=[10, 50, 2], neuron_params=config.training.biologically_plausible.neuron, learning_rule=bio_learning_rule, sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification)
@@ -182,14 +173,14 @@ class TrainingContainer(containers.DeclarativeContainer):
     rl_agent = providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device)
     bio_rl_trainer = providers.Factory(BioRLTrainer, agent=rl_agent, env=rl_environment)
     particle_filter_trainer = providers.Factory(ParticleFilterTrainer, base_model=bio_snn_model, config=config, device=device)
-
+    
     # === Planner ===
-    planner_snn = providers.Factory(PlannerSNN, vocab_size=providers.Callable(len, tokenizer), d_model=config.model.d_model, d_state=config.model.d_state, num_layers=config.model.num_layers, time_steps=config.model.time_steps, n_head=config.model.n_head, num_skills=10)
+    planner_snn = providers.Factory(PlannerSNN, vocab_size=providers.Callable(lambda t: len(t) if t else 0, tokenizer.provided), d_model=config.model.d_model, d_state=config.model.d_state, num_layers=config.model.num_layers, time_steps=config.model.time_steps, n_head=config.model.n_head, num_skills=10)
     planner_optimizer = providers.Factory(AdamW, lr=config.training.planner.learning_rate)
     planner_loss = providers.Factory(PlannerLoss)
     
     # === Registry ===
-    redis_client = providers.Singleton(redis.Redis, **config.model_registry.redis)
+    redis_client = providers.Singleton(redis.Redis, **config.model_registry.redis.as_dict())
     model_registry = providers.Selector(config.model_registry.provider,
         file=providers.Singleton(SimpleModelRegistry, registry_path=config.model_registry.file.path),
         distributed=providers.Singleton(DistributedModelRegistry, registry_path=config.model_registry.file.path)
