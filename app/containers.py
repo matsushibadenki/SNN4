@@ -1,9 +1,12 @@
-# matsibadenki/snn4/app/containers.py
+# ファイルパス: app/containers.py
 # (修正)
 # 修正: mypyエラー 'Name is not defined' を解消するため、
 #       不足しているすべてのモジュールのインポート文を追加。
 # 修正: PlannerSNNのインスタンス生成時の依存関係の解決方法を修正し、
 #       設定値がNoneになる問題を解消。
+# 修正(v2): Optimizerのプロバイダがモデルのパラメータを受け取れるように修正し、
+#           `TypeError: AdamW.__init__() missing 1 required positional argument: 'params'`
+#           エラーを解消する。
 
 import torch
 from dependency_injector import containers, providers
@@ -125,8 +128,10 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
 
     # === 勾配ベース学習 (gradient_based) のためのプロバイダ ===
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     optimizer = providers.Factory(AdamW, lr=config.training.gradient_based.learning_rate)
     scheduler = providers.Factory(_create_scheduler, optimizer=optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs)
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     standard_loss = providers.Factory(
         CombinedLoss,
@@ -146,18 +151,24 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
 
     teacher_model = providers.Factory(AutoModelForCausalLM.from_pretrained, pretrained_model_name_or_path=config.training.gradient_based.distillation.teacher_model)
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     standard_trainer = providers.Factory(
-        BreakthroughTrainer, model=snn_model, optimizer=optimizer, criterion=standard_loss, scheduler=scheduler,
+        BreakthroughTrainer, model=snn_model, 
+        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate), 
+        criterion=standard_loss, scheduler=scheduler,
         device=providers.Factory(get_auto_device), grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         rank=-1, use_amp=config.training.gradient_based.use_amp, log_dir=config.training.log_dir,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn,
     )
     distillation_trainer = providers.Factory(
-        DistillationTrainer, model=snn_model, optimizer=optimizer, criterion=distillation_loss, scheduler=scheduler,
+        DistillationTrainer, model=snn_model, 
+        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate), 
+        criterion=distillation_loss, scheduler=scheduler,
         device=providers.Factory(get_auto_device), grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         rank=-1, use_amp=config.training.gradient_based.use_amp, log_dir=config.training.log_dir,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn,
     )
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     # === 自己教師あり学習 (self_supervised) のためのプロバイダ ===
     ssl_optimizer = providers.Factory(AdamW, lr=config.training.self_supervised.learning_rate)
@@ -170,13 +181,16 @@ class TrainingContainer(containers.DeclarativeContainer):
         spike_reg_weight=config.training.self_supervised.loss.spike_reg_weight,
         mem_reg_weight=config.training.self_supervised.loss.mem_reg_weight,
     )
-
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     self_supervised_trainer = providers.Factory(
-        SelfSupervisedTrainer, model=snn_model, optimizer=ssl_optimizer, criterion=self_supervised_loss, scheduler=ssl_scheduler,
+        SelfSupervisedTrainer, model=snn_model, 
+        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.self_supervised.learning_rate), 
+        criterion=self_supervised_loss, scheduler=ssl_scheduler,
         device=providers.Factory(get_auto_device), grad_clip_norm=config.training.self_supervised.grad_clip_norm,
         rank=-1, use_amp=config.training.self_supervised.use_amp, log_dir=config.training.log_dir,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn,
     )
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     # === 物理情報学習 (physics_informed) のためのプロバイダ ===
     pi_optimizer = providers.Factory(AdamW, lr=config.training.physics_informed.learning_rate)
@@ -189,13 +203,16 @@ class TrainingContainer(containers.DeclarativeContainer):
         spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight,
         mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight,
     )
-
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     physics_informed_trainer = providers.Factory(
-        PhysicsInformedTrainer, model=snn_model, optimizer=pi_optimizer, criterion=physics_informed_loss, scheduler=pi_scheduler,
+        PhysicsInformedTrainer, model=snn_model, 
+        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.physics_informed.learning_rate), 
+        criterion=physics_informed_loss, scheduler=pi_scheduler,
         device=providers.Factory(get_auto_device), grad_clip_norm=config.training.physics_informed.grad_clip_norm,
         rank=-1, use_amp=config.training.physics_informed.use_amp, log_dir=config.training.log_dir,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn,
     )
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     # === 確率的アンサンブル学習 (probabilistic_ensemble) のためのプロバイダ ===
     pe_optimizer = providers.Factory(AdamW, lr=config.training.probabilistic_ensemble.learning_rate)
@@ -207,13 +224,16 @@ class TrainingContainer(containers.DeclarativeContainer):
         ce_weight=config.training.probabilistic_ensemble.loss.ce_weight,
         variance_reg_weight=config.training.probabilistic_ensemble.loss.variance_reg_weight,
     )
-
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     probabilistic_ensemble_trainer = providers.Factory(
-        ProbabilisticEnsembleTrainer, model=snn_model, optimizer=pe_optimizer, criterion=probabilistic_ensemble_loss, scheduler=pe_scheduler,
+        ProbabilisticEnsembleTrainer, model=snn_model, 
+        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.probabilistic_ensemble.learning_rate), 
+        criterion=probabilistic_ensemble_loss, scheduler=pe_scheduler,
         device=providers.Factory(get_auto_device), grad_clip_norm=config.training.probabilistic_ensemble.grad_clip_norm,
         rank=-1, use_amp=config.training.probabilistic_ensemble.use_amp, log_dir=config.training.log_dir,
         astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn,
     )
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     # === 生物学的学習 (biologically_plausible) のためのプロバイダ ===
     bio_learning_rule = providers.Selector(
@@ -333,14 +353,12 @@ class AgentContainer(containers.DeclarativeContainer):
     )
 
     # --- 学習済みプランナーモデルのプロバイダ ---
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     loaded_planner_snn = providers.Singleton(
         _load_planner_snn_factory,
         planner_snn_instance=training_container.planner_snn,
         model_path=config.training.planner.model_path,
         device=device,
     )
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     
     hierarchical_planner = providers.Factory(
         HierarchicalPlanner,
