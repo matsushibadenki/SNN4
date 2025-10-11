@@ -1,11 +1,7 @@
-# matsushibadenki/snn/snn_research/training/trainers.py
-# SNNモデルの学習と評価ループを管理するTrainerクラス (モニタリング・評価機能完備)
-# 改善点: モデル保存時に'adaptive_threshold'も除外対象に追加し、安定性を向上。
-# 改善点 (v2): 確率的アンサンブル学習のためのParticleFilterTrainerを新規追加。
-# 修正点 (v3): ParticleFilterTrainerがdict型のconfigを正しく扱えるように修正。
-# 修正点 (v4): ParticleFilterTrainerのデータ次元の不整合を修正。
-# 修正点 (v5): MPSデバイス不整合エラーを修正。
+# ファイルパス: snn_research/training/trainers.py
+# (省略...)
 # 修正点 (v6): `device`引数が不足しているエラーを修正。
+# 修正点 (v7): ParticleFilterTrainerのデバイス不整合エラー(RuntimeError: Expected vec.is_mps() to be true)を修正。
 
 import torch
 import torch.nn as nn
@@ -444,7 +440,12 @@ class ParticleFilterTrainer:
 
     def train_step(self, data: torch.Tensor, targets: torch.Tensor) -> float:
         """1ステップの学習（予測、尤度計算、再サンプリング）を実行する。"""
-        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # データとターゲットをモデルと同じデバイスに移動
+        data = data.to(self.device)
+        targets = targets.to(self.device)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+
         # 1. 予測 & ノイズ付加 (各パーティクル)
         for particle in self.particles:
             # パラメータに少量のノイズを加えて多様性を維持
@@ -463,7 +464,10 @@ class ParticleFilterTrainer:
                 else:
                     squeezed_data = data
 
-                input_spikes = (torch.rand_like(squeezed_data) > 0.5).float()
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+                # input_spikesも同じデバイス上に作成
+                input_spikes = (torch.rand_like(squeezed_data) > 0.5).float().to(self.device)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
                 outputs, _ = particle(input_spikes)
                 
                 if targets.dim() > 1:
