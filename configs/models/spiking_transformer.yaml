@@ -1,0 +1,10 @@
+# configs/models/spiking_transformer.yaml
+# スパイキングトランスフォーマーモデルの設定
+
+type: spiking_transformer
+params:
+  num_layers: 6
+  embed_dim: 256
+  num_heads: 8
+  vocab_size: 10000  # データセットに合わせて要調整
+  max_len: 512
