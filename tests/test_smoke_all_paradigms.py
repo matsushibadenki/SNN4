@@ -2,6 +2,9 @@
 # Title: 全学習パラダイム・推論 スモークテスト
 # Description: プロジェクトに実装されている主要な学習・推論機能が、
 #              極小データとモデルでエラーなく実行されることを高速に確認する。
+# 修正点: pytestのフィクスチャのスコープを'module'から'function'に変更し、
+#         各テストが完全に独立して実行されるように修正。これにより、
+#         テスト間の状態共有に起因するエラーを解消する。
 
 import sys
 import os
@@ -24,9 +27,11 @@ SMOKE_CONFIG = "configs/smoke_test_config.yaml"
 DATA_PATH = "data/smoke_test_data.jsonl"
 
 
-@pytest.fixture(scope="module")
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+@pytest.fixture
 def container():
-    """DIコンテナを初期化し、テストフィクスチャとして提供する。"""
+    """DIコンテナを初期化し、テストフィクスチャとして提供する。（スコープを関数ごとに変更）"""
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     c = TrainingContainer()
     c.config.from_yaml(SMOKE_CONFIG)
     c.config.from_yaml(MODEL_CONFIG)
@@ -43,7 +48,6 @@ def test_gradient_based_training(container: TrainingContainer):
     dummy_target = torch.randint(0, 100, (2, 4))
     dummy_loader = DataLoader(TensorDataset(dummy_input, dummy_target), batch_size=2)
     
-    # train.pyのcollate_fnを使わないので、直接タプルを渡す
     trainer.train_epoch(dummy_loader, epoch=0)
     assert True # エラーなく完了すればOK
 
@@ -65,7 +69,7 @@ def test_distillation_training(container: TrainingContainer):
     
     metrics = trainer._run_step(dummy_batch, is_train=True)
     assert "total" in metrics
-    assert not torch.isnan(metrics["total"]).any()
+    assert not torch.isnan(torch.tensor(metrics["total"])).any()
 
 
 def test_physics_informed_training(container: TrainingContainer):
