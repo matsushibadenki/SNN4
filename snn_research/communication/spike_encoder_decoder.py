@@ -56,15 +56,12 @@ class SpikeEncoderDecoder:
         spike_counts = spikes.sum(dim=1)
         char_indices = torch.where(spike_counts > 0)[0]
         
-        # mypyエラーを修正: keyに渡すlambda式が返す値を .item() で数値に変換
         sorted_indices = sorted(char_indices, key=lambda idx: spike_counts[idx].item(), reverse=True)
 
         json_str = "".join([chr(int(idx)) for idx in sorted_indices if int(idx) < 256])
         
         try:
-            # まずJSONとしてパースを試みる
             return json.loads(json_str)
         except json.JSONDecodeError:
-            # 失敗した場合は、元の文字列がJSONではなかったとみなし、そのまま返す
             return json_str
 
