@@ -49,7 +49,8 @@ class BreakthroughTrainer:
         
         self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
         self.best_metric = float('inf')
-        
+        self.epoch = 0  # ◾️ エポックカウンターを追加
+
         if self.rank in [-1, 0]:
             self.writer = SummaryWriter(log_dir)
             print(f"✅ TensorBoard logging enabled. Log directory: {log_dir}")
@@ -119,10 +120,11 @@ class BreakthroughTrainer:
         return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
 
-    def train_epoch(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
+    def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]: # ◾️ epoch引数を削除
         total_metrics: Dict[str, float] = collections.defaultdict(float)
         num_batches = len(dataloader)
-        progress_bar = tqdm(dataloader, desc=f"Training Epoch {epoch}", disable=(self.rank not in [-1, 0]))
+        # ◾️ self.epoch を使用するように変更
+        progress_bar = tqdm(dataloader, desc=f"Training Epoch {self.epoch}", disable=(self.rank not in [-1, 0]))
         
         self.model.train()
         for batch in progress_bar:
@@ -136,12 +138,16 @@ class BreakthroughTrainer:
         
         if self.rank in [-1, 0]:
             for key, value in avg_metrics.items():
-                self.writer.add_scalar(f'Train/{key}', value, epoch)
+                # ◾️ self.epoch を使用するように変更
+                self.writer.add_scalar(f'Train/{key}', value, self.epoch)
             if self.scheduler:
-                self.writer.add_scalar('Train/learning_rate', self.scheduler.get_last_lr()[0], epoch)
+                # ◾️ self.epoch を使用するように変更
+                self.writer.add_scalar('Train/learning_rate', self.scheduler.get_last_lr()[0], self.epoch)
             else:
-                self.writer.add_scalar('Train/learning_rate', self.optimizer.param_groups[0]['lr'], epoch)
+                # ◾️ self.epoch を使用するように変更
+                self.writer.add_scalar('Train/learning_rate', self.optimizer.param_groups[0]['lr'], self.epoch)
         
+        self.epoch += 1  # ◾️ エポックカウンターをインクリメント
         return avg_metrics
 
 
@@ -197,10 +203,11 @@ class BreakthroughTrainer:
                 torch.save(temp_state_for_best, best_path)
                 print(f"🏆 新しいベストモデルを '{best_path}' に保存しました (Metric: {metric_value:.4f})。")
 
-    def load_checkpoint(self, path: str) -> int:
+    def load_checkpoint(self, path: str): # ◾️ 戻り値を削除
         if not os.path.exists(path):
             print(f"⚠️ チェックポイントファイルが見つかりません: {path}。最初から学習を開始します。")
-            return 0
+            self.epoch = 0
+            return
             
         checkpoint = torch.load(path, map_location=self.device)
         model_to_load_container = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
@@ -212,9 +219,8 @@ class BreakthroughTrainer:
         if self.use_amp and 'scaler_state_dict' in checkpoint: self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
         self.best_metric = checkpoint.get('best_metric', float('inf'))
-        start_epoch = checkpoint.get('epoch', 0) + 1
-        print(f"✅ チェックポイント '{path}' を正常にロードしました。Epoch {start_epoch} から学習を再開します。")
-        return start_epoch
+        self.epoch = checkpoint.get('epoch', 0) + 1 # ◾️ self.epoch を直接設定
+        print(f"✅ チェックポイント '{path}' を正常にロードしました。Epoch {self.epoch} から学習を再開します。")
 
 class DistillationTrainer(BreakthroughTrainer):
     def train(self, train_loader: DataLoader, val_loader: DataLoader, epochs: int, teacher_model: Optional[nn.Module] = None) -> Dict[str, float]:
