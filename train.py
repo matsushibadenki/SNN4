@@ -136,7 +136,6 @@ def train(
         start_epoch = trainer.load_checkpoint(args.resume_path) if args.resume_path else 0
         for epoch in range(start_epoch, config['training']['epochs']):
             if train_sampler: train_sampler.set_epoch(epoch)
-            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
             trainer.train_epoch(train_loader, epoch)
             if rank in [-1, 0] and (epoch % config['training']['eval_interval'] == 0 or epoch == config['training']['epochs'] - 1):
                 val_metrics = trainer.evaluate(val_loader, epoch)
@@ -146,8 +145,11 @@ def train(
                         path=checkpoint_path, epoch=epoch, metric_value=val_metrics.get('total', float('inf')),
                         tokenizer_name=config['data']['tokenizer_name'], config=config['model']
                     )
-            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-
+        
+        # 継続学習のために、このタスクのFisher行列を計算・保存する
+        if rank in [-1, 0] and args.task_name and config['training']['gradient_based']['loss']['ewc_weight'] > 0:
+            if isinstance(trainer, BreakthroughTrainer):
+                trainer._compute_ewc_fisher_matrix(train_loader, args.task_name)
     else:
         raise ValueError(f"Unknown or unsupported training paradigm for this script: '{paradigm}'.")
 
