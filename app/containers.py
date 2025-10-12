@@ -94,25 +94,42 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
 
     astrocyte_network = providers.Factory(AstrocyteNetwork, snn_model=snn_model)
-    meta_cognitive_snn = providers.Factory(MetaCognitiveSNN, **providers.Dict(config.training.meta_cognition))
+    meta_cognitive_snn = providers.Factory(MetaCognitiveSNN)
 
-    # === Losses ===
-    standard_loss = providers.Factory(CombinedLoss, tokenizer=tokenizer, **providers.Dict(config.training.gradient_based.loss))
-    distillation_loss = providers.Factory(DistillationLoss, tokenizer=tokenizer, **providers.Dict(config.training.gradient_based.distillation.loss))
-    physics_informed_loss = providers.Factory(PhysicsInformedLoss, tokenizer=tokenizer, **providers.Dict(config.training.physics_informed.loss))
+    # === Losses (using delayed config access) ===
+    standard_loss = providers.Factory(
+        CombinedLoss, tokenizer=tokenizer, 
+        ce_weight=config.training.gradient_based.loss.ce_weight,
+        spike_reg_weight=config.training.gradient_based.loss.spike_reg_weight,
+        mem_reg_weight=config.training.gradient_based.loss.mem_reg_weight,
+    )
+    distillation_loss = providers.Factory(
+        DistillationLoss, tokenizer=tokenizer,
+        ce_weight=config.training.gradient_based.distillation.loss.ce_weight,
+        distill_weight=config.training.gradient_based.distillation.loss.distill_weight,
+        spike_reg_weight=config.training.gradient_based.distillation.loss.spike_reg_weight,
+        mem_reg_weight=config.training.gradient_based.distillation.loss.mem_reg_weight,
+        temperature=config.training.gradient_based.distillation.loss.temperature,
+    )
+    physics_informed_loss = providers.Factory(
+        PhysicsInformedLoss, tokenizer=tokenizer,
+        ce_weight=config.training.physics_informed.loss.ce_weight,
+        spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight,
+        mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight,
+    )
 
-    # === Trainers ===
+    # === Trainers (with dedicated optimizers and schedulers) ===
     grad_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate)
     grad_scheduler = providers.Factory(_create_scheduler, optimizer=grad_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs)
     
     standard_trainer = providers.Factory(
-        BreakthroughTrainer, model=snn_model, optimizer=grad_optimizer, criterion=standard_loss, scheduler=grad_scheduler,
-        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
+        BreakthroughTrainer, model=snn_model, optimizer=grad_optimizer, criterion=standard_loss, scheduler=grad_scheduler, device=device,
+        grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
     distillation_trainer = providers.Factory(
-        DistillationTrainer, model=snn_model, optimizer=grad_optimizer, criterion=distillation_loss, scheduler=grad_scheduler,
-        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
+        DistillationTrainer, model=snn_model, optimizer=grad_optimizer, criterion=distillation_loss, scheduler=grad_scheduler, device=device,
+        grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
@@ -120,8 +137,8 @@ class TrainingContainer(containers.DeclarativeContainer):
     pi_scheduler = providers.Factory(_create_scheduler, optimizer=pi_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs)
     
     physics_informed_trainer = providers.Factory(
-        PhysicsInformedTrainer, model=snn_model, optimizer=pi_optimizer, criterion=physics_informed_loss, scheduler=pi_scheduler,
-        device=device, grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp,
+        PhysicsInformedTrainer, model=snn_model, optimizer=pi_optimizer, criterion=physics_informed_loss, scheduler=pi_scheduler, device=device,
+        grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp,
         log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
@@ -145,7 +162,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     rl_agent = providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device)
     rl_environment = providers.Factory(GridWorldEnv, device=device)
     bio_rl_trainer = providers.Factory(BioRLTrainer, agent=rl_agent, env=rl_environment)
-
+    
     # === Etc ===
     model_registry = providers.Selector(
         config.model_registry.provider,
