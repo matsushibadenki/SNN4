@@ -67,6 +67,8 @@ training:
       v_threshold: 1.0
       v_reset: 0.0
       v_rest: 0.0
+      threshold_decay: 0.99 # 時間経過による動的閾値の減衰率
+      threshold_step: 0.05  # スパイク後の閾値の上昇量
     stdp:
       tau_trace: 20.0
       learning_rate: 0.005
