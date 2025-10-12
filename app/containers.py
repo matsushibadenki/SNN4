@@ -5,6 +5,7 @@
 # 修正: PlannerSNNのインスタンス生成時の依存関係の解決方法を修正し、
 #       設定値がNoneになる問題を解消。
 # 修正(v2): ImportErrorを解消するため、TASK_REGISTRYのプロバイダを追加。
+# 修正(v3): 循環参照エラー解消のため、インポート元を修正。
 
 import torch
 from dependency_injector import containers, providers
@@ -65,7 +66,7 @@ from snn_research.cognitive_architecture.motor_cortex import MotorCortex
 from snn_research.cognitive_architecture.hybrid_perception_cortex import HybridPerceptionCortex
 
 # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-from snn_research.benchmark.tasks import TASK_REGISTRY
+from snn_research.benchmark import TASK_REGISTRY
 from .utils import get_auto_device
 # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
