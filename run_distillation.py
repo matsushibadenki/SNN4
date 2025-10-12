@@ -21,12 +21,22 @@ async def main():
     container.config.from_yaml(args.config)
     container.config.from_yaml(args.model_config)
 
-    # DIコンテナから必要なコンポーネントを取得
-    student_model = container.snn_model()
-    # DistillationTrainerは多くの引数を必要とするため、コンテナから直接取得
-    distillation_trainer = container.distillation_trainer()
-    model_registry = container.model_registry()
+    # --- ▼ 修正 ▼ ---
+    # DIコンテナから必要なコンポーネントを正しい順序で取得・構築
     device = container.device()
+    student_model = container.snn_model().to(device)
+    optimizer = container.optimizer(params=student_model.parameters())
+    scheduler = container.scheduler(optimizer=optimizer) if container.config.training.gradient_based.use_scheduler() else None
+    
+    # 依存関係をオーバーライドしてtrainerをインスタンス化
+    distillation_trainer = container.distillation_trainer(
+        model=student_model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device=device
+    )
+    model_registry = container.model_registry()
+    # --- ▲ 修正 ▲ ---
     
     manager = KnowledgeDistillationManager(
         student_model=student_model,
