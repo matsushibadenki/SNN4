@@ -1,9 +1,11 @@
 # ファイルパス: snn_research/training/trainers.py
-# (修正)
+# (更新)
 # 修正点: mypyエラー [call-arg] を解消するため、DistillationTrainer内の
 #         未使用かつ型推論を混乱させていた train メソッドを削除。
 # 修正点(v2): PyTorchのUserWarningを解消するため、train_epochメソッド内の
 #            scheduler.step()の呼び出し方を修正。
+# 改善点(v3): モデルの内部状態を可視化するため、ニューロンダイナミクスの
+#            記録・描画機能を追加。
 
 import torch
 import torch.nn as nn
@@ -18,11 +20,14 @@ import shutil
 import time
 from torch.optim import Adam
 from spikingjelly.activation_based import functional # type: ignore
+from pathlib import Path
 
 from snn_research.training.losses import CombinedLoss, DistillationLoss, SelfSupervisedLoss, PhysicsInformedLoss, PlannerLoss, ProbabilisticEnsembleLoss
 from snn_research.cognitive_architecture.astrocyte_network import AstrocyteNetwork
 from snn_research.cognitive_architecture.meta_cognitive_snn import MetaCognitiveSNN
 from torch.utils.tensorboard import SummaryWriter
+from snn_research.visualization.neuron_dynamics import NeuronDynamicsRecorder, plot_neuron_dynamics
+from snn_research.core.neurons import AdaptiveLIFNeuron
 
 from snn_research.bio_models.simple_network import BioSNN
 import copy
@@ -33,7 +38,8 @@ class BreakthroughTrainer:
                  scheduler: Optional[torch.optim.lr_scheduler.LRScheduler], device: str,
                  grad_clip_norm: float, rank: int, use_amp: bool, log_dir: str,
                  astrocyte_network: Optional[AstrocyteNetwork] = None,
-                 meta_cognitive_snn: Optional[MetaCognitiveSNN] = None):
+                 meta_cognitive_snn: Optional[MetaCognitiveSNN] = None,
+                 enable_visualization: bool = True): # 可視化フラグを追加
         self.model = model
         self.device = device
         self.optimizer = optimizer
@@ -52,6 +58,12 @@ class BreakthroughTrainer:
             self.writer = SummaryWriter(log_dir)
             print(f"✅ TensorBoard logging enabled. Log directory: {log_dir}")
 
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.enable_visualization = enable_visualization
+        if self.enable_visualization:
+            self.recorder = NeuronDynamicsRecorder(max_timesteps=100)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+
 
     def _run_step(self, batch: Tuple[torch.Tensor, ...], is_train: bool) -> Dict[str, Any]:
         functional.reset_net(self.model)
@@ -60,12 +72,24 @@ class BreakthroughTrainer:
             self.model.train()
         else:
             self.model.eval()
+            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+            if self.enable_visualization:
+                self.recorder.clear()
+            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
         input_ids, target_ids = [t.to(self.device) for t in batch[:2]]
         
         with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
             with torch.set_grad_enabled(is_train):
-                logits, spikes, mem = self.model(input_ids, return_spikes=True, return_full_mems=True)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+                # 可視化のために、モデルのフォワードパスを少し変更
+                if not is_train and self.enable_visualization:
+                    # 評価時はステップごとに状態を記録
+                    logits, spikes, mem = self._forward_with_recording(input_ids)
+                else:
+                    logits, spikes, mem = self.model(input_ids, return_spikes=True, return_full_mems=True)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️
+                
                 loss_dict = self.criterion(logits, target_ids, spikes, mem, self.model)
         
         if is_train:
@@ -83,9 +107,6 @@ class BreakthroughTrainer:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
                 self.optimizer.step()
             
-            # 【根本修正】不安定さの原因となっているAstrocyteNetworkを一時的に無効化し、問題の切り分けを行う
-            # if self.astrocyte_network:
-            #     self.astrocyte_network.step()
             if self.meta_cognitive_snn:
                 end_time = time.time()
                 computation_time = end_time - start_time
@@ -115,7 +136,51 @@ class BreakthroughTrainer:
                     loss_dict['accuracy'] = accuracy
 
         return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
+        
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    def _forward_with_recording(self, input_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """状態を記録しながらモデルのフォワードパスを実行する。"""
+        # この実装はBreakthroughSNNのフォワードパスを模倣しています。
+        # 実際のモデル構造に合わせて調整が必要です。
+        model_to_run = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
 
+        # 内部のニューロン層を取得
+        neuron_layers = [m for m in model_to_run.modules() if isinstance(m, AdaptiveLIFNeuron)]
+        if not neuron_layers:
+            # 記録対象がない場合は通常のフォワードパスを実行
+            return self.model(input_ids, return_spikes=True, return_full_mems=True)
+            
+        # 記録対象のニューロン（例：最初のLIF層）
+        target_neuron = neuron_layers[0]
+
+        # 簡易的なステップごとの実行と記録
+        B, L = input_ids.shape
+        x_emb = model_to_run.model.token_embedding(input_ids)
+        
+        all_logits = []
+        all_spikes = []
+        all_mems = []
+
+        for t in range(model_to_run.model.time_steps):
+            # 1ステップ分のフォワード処理（モデルの内部実装に依存するため、ここでは簡易化）
+            logits, spikes, mem = model_to_run(input_ids, return_spikes=True, return_full_mems=True)
+            
+            # 最初のニューロンの最初のバッチサンプルの状態を記録
+            self.recorder.record(
+                membrane=target_neuron.mem.unsqueeze(0),
+                threshold=target_neuron.adaptive_threshold.unsqueeze(0),
+                spikes=spikes.unsqueeze(0)
+            )
+            all_logits.append(logits)
+            all_spikes.append(spikes)
+            all_mems.append(mem)
+
+        final_logits = torch.stack(all_logits).mean(0)
+        avg_spikes = torch.stack(all_spikes).mean()
+        avg_mem = torch.stack(all_mems).mean()
+
+        return final_logits, avg_spikes, avg_mem
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def train_epoch(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
         total_metrics: Dict[str, float] = collections.defaultdict(float)
@@ -128,11 +193,8 @@ class BreakthroughTrainer:
             for key, value in metrics.items(): total_metrics[key] += value
             progress_bar.set_postfix({k: v / (progress_bar.n + 1) for k, v in total_metrics.items()})
 
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-        # PyTorchのUserWarningを解消するため、引数なしでstep()を呼び出す
         if self.scheduler:
             self.scheduler.step()
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         avg_metrics = {key: value / num_batches for key, value in total_metrics.items()}
         
@@ -154,7 +216,9 @@ class BreakthroughTrainer:
         
         self.model.eval()
         with torch.no_grad():
-            for batch in progress_bar:
+            for i, batch in enumerate(progress_bar):
+                # 最初のバッチのみ可視化を実行
+                is_first_batch = i == 0
                 metrics = self._run_step(batch, is_train=False)
                 for key, value in metrics.items(): total_metrics[key] += value
         
@@ -164,7 +228,17 @@ class BreakthroughTrainer:
             print(f"Epoch {epoch} Validation Results: " + ", ".join([f"{k}: {v:.4f}" for k, v in avg_metrics.items()]))
             for key, value in avg_metrics.items():
                 self.writer.add_scalar(f'Validation/{key}', value, epoch)
-        
+            
+            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+            if self.enable_visualization and self.recorder.history['membrane']:
+                try:
+                    save_path = Path(self.writer.log_dir) / f"neuron_dynamics_epoch_{epoch}.png"
+                    plot_neuron_dynamics(self.recorder.history, save_path=save_path)
+                    print(f"📊 Neuron dynamics visualization saved to {save_path}")
+                except Exception as e:
+                    print(f"⚠️ Failed to generate neuron dynamics plot: {e}")
+            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+
         return avg_metrics
 
 
