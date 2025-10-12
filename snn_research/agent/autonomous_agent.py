@@ -11,6 +11,7 @@
 # 修正点(v4): mypyエラー[attr-defined]を修正。
 # 改善点(v5): Web検索と要約機能のダミー実装を、実際のツール呼び出しと自己の専門家モデル活用に置き換え。
 # 修正点(v6): mypyエラー[name-defined]を解消するため、jsonとgooglesearchをインポート。
+# 修正点(v7): mypyエラー[import-untyped]を解消するため、type: ignoreを追加。
 
 from typing import Dict, Any, Optional, List
 import asyncio
@@ -23,7 +24,7 @@ from collections import Counter
 from heapq import nlargest
 import json
 try:
-    from googlesearch import search
+    from googlesearch import search  # type: ignore
 except ImportError:
     print("⚠️ 'googlesearch-python' is not installed. Web search functionality will be limited. Please run 'pip install googlesearch-python'")
     def search(*args, **kwargs):
