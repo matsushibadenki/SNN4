@@ -1,7 +1,10 @@
-# matsushibadenki/snn4/snn_research/core/snn_core.py
-# SNNモデルの定義、次世代ニューロンなど、中核となるロジックを集約したライブラリ
-# 修正点: AdaptiveLIFNeuronに不要なキーワード引数('type')が渡されるエラーを修正。
-# 改善点: 新しいアーキテクチャとして SpikingMamba を追加。
+# ファイルパス: snn_research/core/snn_core.py
+# (修正)
+# Title: SNNモデルの定義、次世代ニューロンなど、中核となるロジック
+# Description:
+# - 循環インポートを解消するため、共有クラスを `base.py` に移動し、そこからインポートする。
+# - mypyエラーとNameErrorを解消するため、`SNNCore.__init__`メソッドの実装を修正。
+# - 新しいアーキテクチャ(SpikingMamba, SpikingHRM)を `model_map` に追加。
 
 import torch
 import torch.nn as nn
@@ -11,22 +14,12 @@ from typing import Tuple, Dict, Any, Optional, List, Type, cast
 import math
 from omegaconf import DictConfig, OmegaConf
 
-# 外部ファイルからニューロンをインポート
+from .base import BaseModel, SNNLayerNorm
 from .neurons import AdaptiveLIFNeuron, IzhikevichNeuron
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-# 新しいMAMBAモデルをインポート
 from .mamba_core import SpikingMamba
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from .hrm_core import SpikingHRM
 
 # --- レイヤーとモジュール ---
-
-class SNNLayerNorm(nn.Module):
-    def __init__(self, normalized_shape):
-        super().__init__()
-        self.norm = nn.LayerNorm(normalized_shape)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.norm(x)
 
 class PredictiveCodingLayer(nn.Module):
     error_mean: torch.Tensor
@@ -61,8 +54,6 @@ class PredictiveCodingLayer(nn.Module):
         prediction_error = normalized_error * self.error_scale
         
         state_update, _ = self.inference_neuron(self.inference_fc(self.norm_error(prediction_error)))
-        
-        # 状態更新にモーメンタムを導入し、発散を防ぐ
         updated_state = top_down_state * 0.9 + state_update * 0.1
         
         return updated_state, prediction_error, prediction
@@ -89,8 +80,6 @@ class SpikeDrivenSelfAttention(nn.Module):
         k = k.view(B, N, self.n_head, self.d_head).permute(0, 2, 3, 1)
         v = v.view(B, N, self.n_head, self.d_head).permute(0, 2, 1, 3)
         
-        # TODO: 評価レポートの指摘に基づき、より効率的なイベント駆動型Attentionメカニズムを検討する。
-        # 現状の実装は、スパイクを生成した後に密な行列積を行っており、SNNのスパース性を十分に活用できていない。
         attn_scores = torch.matmul(q, k) / math.sqrt(self.d_head)
         attn_weights = torch.sigmoid(attn_scores)
         attn_output = torch.matmul(attn_weights, v)
@@ -113,45 +102,19 @@ class STAttenBlock(nn.Module):
         B, T, D = x.shape
         attn_out = self.attn(self.norm1(x))
         x_attn = x + attn_out
-        
         x_flat = x_attn.reshape(B * T, D)
         spike_flat, _ = self.lif1(x_flat)
         x_res = spike_flat.reshape(B, T, D)
-        
         ffn_in = self.norm2(x_res)
         ffn_flat = ffn_in.reshape(B * T, D)
         ffn_hidden, _ = self.lif2(self.fc1(ffn_flat))
         ffn_out_flat = self.fc2(ffn_hidden)
         ffn_out = ffn_out_flat.reshape(B, T, D)
-        
         x_ffn = x_res + ffn_out
         x_ffn_flat = x_ffn.reshape(B * T, D)
         out_flat, _ = self.lif3(x_ffn_flat)
         out = out_flat.reshape(B, T, D)
-        
         return out
-
-class BaseModel(nn.Module):
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.Embedding):
-                nn.init.normal_(m.weight, mean=0.0, std=0.02)
-
-    def get_total_spikes(self) -> float:
-        total = 0.0
-        for module in self.modules():
-            if isinstance(module, (AdaptiveLIFNeuron, IzhikevichNeuron)):
-                total += module.total_spikes.item()
-        return total
-    
-    def reset_spike_stats(self):
-        for module in self.modules():
-            if isinstance(module, (AdaptiveLIFNeuron, IzhikevichNeuron)):
-                module.reset()
 
 class BreakthroughSNN(BaseModel):
     def __init__(self, vocab_size: int, d_model: int, d_state: int, num_layers: int, time_steps: int, n_head: int, neuron_config: Optional[Dict[str, Any]] = None, **kwargs: Any):
@@ -162,14 +125,13 @@ class BreakthroughSNN(BaseModel):
         self.input_encoder = nn.Linear(d_model, d_model)
 
         neuron_params = neuron_config.copy() if neuron_config is not None else {}
-        neuron_params.pop('type', None) 
+        neuron_params.pop('type', None)
         neuron_params.pop('num_branches', None)
         neuron_params.pop('branch_features', None)
 
         self.pc_layers = nn.ModuleList(
             [PredictiveCodingLayer(d_model, d_state, AdaptiveLIFNeuron, neuron_params) for _ in range(num_layers)]
         )
-
         self.output_projection = nn.Linear(d_state * num_layers, vocab_size)
         self._init_weights()
 
@@ -178,10 +140,8 @@ class BreakthroughSNN(BaseModel):
         device = input_ids.device
         token_emb = self.token_embedding(input_ids)
         embedded_sequence = self.input_encoder(token_emb)
-        
         inference_neuron = cast(AdaptiveLIFNeuron, self.pc_layers[0].inference_neuron)
         states = [torch.zeros(batch_size, inference_neuron.features, device=device) for _ in range(self.num_layers)]
-        
         all_timestep_outputs = []
         for _ in range(self.time_steps):
             sequence_outputs = []
@@ -195,11 +155,9 @@ class BreakthroughSNN(BaseModel):
         
         final_hidden_states = all_timestep_outputs[-1]
         logits = self.output_projection(final_hidden_states)
-        
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=device)
-        
         return logits, avg_spikes, torch.tensor(0.0, device=device)
 
 class SpikingTransformer(BaseModel):
@@ -237,11 +195,9 @@ class SpikingTransformer(BaseModel):
 
         x_normalized = self.final_norm(x)
         logits = self.output_projection(x_normalized)
-        
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=device)
-        
         return logits, avg_spikes, torch.tensor(0.0, device=device)
 
 class SimpleSNN(BaseModel):
@@ -264,30 +220,38 @@ class SimpleSNN(BaseModel):
             out = self.fc2(out)
             outputs.append(out)
         logits = torch.stack(outputs, dim=1)
-        
         avg_spikes_val = self.get_total_spikes() / (B * T) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
-
         return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
 
 class SNNCore(nn.Module):
     def __init__(self, config: DictConfig, vocab_size: int):
         super(SNNCore, self).__init__()
-        # ... (既存のコード) ...
+        if isinstance(config, dict):
+            config = OmegaConf.create(config)
+        self.config = config
+        model_type = self.config.get("architecture_type", "simple")
+        self.model: nn.Module
+        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # mypyとNameErrorを修正
+        params: Dict[str, Any] = cast(Dict[str, Any], OmegaConf.to_container(self.config, resolve=True))
+        params.pop('path', None)
         neuron_config = params.pop('neuron', {})
 
         model_map = {
             "predictive_coding": BreakthroughSNN,
             "spiking_transformer": SpikingTransformer,
-            "spiking_mamba": SpikingMamba, # MAMBAを追加
-            # ▼▼▼ ここに挿入 ▼▼▼
-            "spiking_hrm": SpikingHRM, # HRMを追加
-            # ▲▲▲ ここまで ▲▲▲
+            "spiking_mamba": SpikingMamba,
+            "spiking_hrm": SpikingHRM,
             "simple": SimpleSNN
         }
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
+        
         self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         return self.model(*args, **kwargs)
+
