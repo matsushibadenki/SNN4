@@ -8,6 +8,10 @@
 #
 # 改善点(v2):
 # - 可視化機能が正しく動作し、画像ファイルが生成されることを確認するテストを追加。
+#
+# 修正点(v3):
+# - TypeErrorを解消するため、test_visualization_output内でoptimizerとschedulerを
+#   正しくインスタンス化してtrainerに渡すように修正。
 
 import pytest
 import torch
@@ -92,7 +96,6 @@ def test_smoke_bio_particle_filter(container: TrainingContainer):
     trainer.train_step(dummy_data, dummy_targets)
     assert True
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 def test_visualization_output(container: TrainingContainer, dummy_dataloader: DataLoader):
     """可視化機能が画像ファイルを正しく生成するかテストする。"""
     print("\n--- Testing: Visualization Output ---")
@@ -100,13 +103,21 @@ def test_visualization_output(container: TrainingContainer, dummy_dataloader: Da
     model = container.snn_model().to(device)
     log_dir = container.config.training.log_dir()
     
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    # オプティマイザとスケジューラを正しくインスタンス化する
+    optimizer = container.optimizer(params=model.parameters())
+    scheduler = container.scheduler(optimizer=optimizer)
+    
     # BreakthroughTrainerを可視化有効で初期化
     trainer = container.standard_trainer(
         model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
         device=device,
         rank=-1,
         enable_visualization=True # 可視化を有効にする
     )
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     
     # 評価を実行（これにより内部でプロットが生成されるはず）
     trainer.evaluate(dummy_dataloader, epoch=0)
@@ -117,4 +128,3 @@ def test_visualization_output(container: TrainingContainer, dummy_dataloader: Da
     assert expected_file.exists(), f"可視化ファイルが生成されませんでした: {expected_file}"
     assert expected_file.stat().st_size > 0, f"可視化ファイルが空です: {expected_file}"
     print(f"✅ 可視化ファイルが正しく生成されました: {expected_file}")
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
