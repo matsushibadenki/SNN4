@@ -20,7 +20,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # 循環参照を避けるため、必要なコンポーネントを直接インポート
-from snn_research.benchmark.tasks import TASK_REGISTRY
+from snn_research.benchmark import TASK_REGISTRY
 from app.utils import get_auto_device
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
