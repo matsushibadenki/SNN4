@@ -131,16 +131,22 @@ def train(
             trainer = container.probabilistic_ensemble_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
 
         
-        start_epoch = trainer.load_checkpoint(args.resume_path) if args.resume_path else 0
-        for epoch in range(start_epoch, config['training']['epochs']):
-            if train_sampler: train_sampler.set_epoch(epoch)
-            trainer.train_epoch(train_loader, epoch)
-            if rank in [-1, 0] and (epoch % config['training']['eval_interval'] == 0 or epoch == config['training']['epochs'] - 1):
-                val_metrics = trainer.evaluate(val_loader, epoch)
-                if epoch % config['training']['log_interval'] == 0:
-                    checkpoint_path = os.path.join(config['training']['log_dir'], f"checkpoint_epoch_{epoch}.pth")
+        if args.resume_path:
+            trainer.load_checkpoint(args.resume_path)
+        
+        # trainerが内部で持つepochカウンターを基準にループする
+        while trainer.epoch < config['training']['epochs']:
+            current_epoch = trainer.epoch
+            if train_sampler: train_sampler.set_epoch(current_epoch)
+            
+            trainer.train_epoch(train_loader) # 引数なしで呼び出し
+            
+            if rank in [-1, 0] and (current_epoch % config['training']['eval_interval'] == 0 or current_epoch == config['training']['epochs'] - 1):
+                val_metrics = trainer.evaluate(val_loader, current_epoch)
+                if current_epoch % config['training']['log_interval'] == 0:
+                    checkpoint_path = os.path.join(config['training']['log_dir'], f"checkpoint_epoch_{current_epoch}.pth")
                     trainer.save_checkpoint(
-                        path=checkpoint_path, epoch=epoch, metric_value=val_metrics.get('total', float('inf')),
+                        path=checkpoint_path, epoch=current_epoch, metric_value=val_metrics.get('total', float('inf')),
                         tokenizer_name=config['data']['tokenizer_name'], config=config['model']
                     )
 
