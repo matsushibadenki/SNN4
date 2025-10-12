@@ -58,7 +58,7 @@ def test_gradient_based_training(container: TrainingContainer):
     dummy_target = torch.randint(0, 100, (2, 4))
     dummy_loader = DataLoader(TensorDataset(dummy_input, dummy_target), batch_size=2)
     
-    trainer.train_epoch(dummy_loader, epoch=0)
+    trainer.train_epoch(dummy_loader) # ◾️ epoch引数を削除
     assert True
 
 
@@ -115,7 +115,7 @@ def test_physics_informed_training(container: TrainingContainer):
     dummy_target = torch.randint(0, 100, (2, 4))
     dummy_loader = DataLoader(TensorDataset(dummy_input, dummy_target), batch_size=2)
 
-    trainer.train_epoch(dummy_loader, epoch=0)
+    trainer.train_epoch(dummy_loader) # ◾️ epoch引数を削除
     assert True
 
 
