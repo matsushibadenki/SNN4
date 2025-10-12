@@ -1,4 +1,4 @@
-# matsushibadenki/snn4/snn4-79496245059a9838ecdcdf953e28024581f28ba2/snn-cli.py
+# matsushibadenki/snn4/snn-cli.py
 # Title: 統合CLIツール
 # Description:
 # - プロジェクトの全機能を一元的に管理・実行するためのコマンドラインインターフェース。
@@ -14,6 +14,9 @@
 #
 # 修正点 (v15):
 # - SyntaxErrorを解消するため、ファイル末尾に誤って混入していたPythonコード以外の説明文を削除。
+#
+# 改善点 (v16):
+# - スパイクベースの通信機能をテストするための `emergent-system communicate` コマンドを追加。
 
 import sys
 from pathlib import Path
@@ -340,6 +343,38 @@ def emergent_execute(
     print(final_report)
     print("="*60)
 
+# --- ◾️◾️◾️◾️◾️↓コマンド追加↓◾️◾️◾️◾️◾️ ---
+@emergent_app.command("communicate", help="2体のエージェントによるスパイクベースの通信タスクを実行します。")
+def emergent_communicate():
+    """スパイクベースの通信をテストするためのラッパー"""
+    from app.containers import AgentContainer
+    from snn_research.agent.autonomous_agent import AutonomousAgent
+    from snn_research.cognitive_architecture.emergent_system import EmergentCognitiveSystem
+    from snn_research.cognitive_architecture.global_workspace import GlobalWorkspace
+    
+    container = AgentContainer()
+    container.config.from_yaml("configs/base_config.yaml")
+
+    planner = container.hierarchical_planner()
+    model_registry = container.model_registry()
+    memory = container.memory()
+    web_crawler = container.web_crawler()
+    
+    global_workspace = GlobalWorkspace(model_registry=model_registry)
+
+    agent1 = AutonomousAgent(name="ObserverAgent", planner=planner, model_registry=model_registry, memory=memory, web_crawler=web_crawler)
+    agent2 = AutonomousAgent(name="ReceiverAgent", planner=planner, model_registry=model_registry, memory=memory, web_crawler=web_crawler)
+
+    emergent_system = EmergentCognitiveSystem(
+        planner=planner,
+        agents=[agent1, agent2],
+        global_workspace=global_workspace,
+        model_registry=model_registry
+    )
+
+    asyncio.run(emergent_system.run_cooperative_observation_task())
+# --- ◾️◾️◾️◾️◾️↑コマンド追加↑◾️◾️◾️◾️◾️ ---
+
 @brain_app.command("run", help="単一の入力で人工脳の認知サイクルを1回実行します。")
 def brain_run(
     input_text: str = typer.Option(..., help="人工脳への感覚入力（テキスト）"),
@@ -446,4 +481,3 @@ def gradient_train(ctx: typer.Context):
 
 if __name__ == "__main__":
     app()
-
