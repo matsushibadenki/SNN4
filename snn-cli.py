@@ -1,16 +1,13 @@
 # matsushibadenki/snn4/snn4-79496245059a9838ecdcdf953e28024581f28ba2/snn-cli.py
 # (省略)
-# 修正点 (v11):
-# - ImportError: attempted relative import with no known parent package を解決。
-# - トップレベルで実行されるスクリプトでの不適切な相対インポートを削除し、
-#   各コマンド関数が必要とするモジュールを局所的にインポートする設計を維持。
-#
-# 改善点 (v12):
-# - ロードマップ フェーズ4 に基づき、人工脳シミュレーションを制御する `brain` コマンドグループを追加。
-#
 # 修正点 (v13):
 # - life-formコマンド実行時のTypeErrorを解消。get_life_form_instanceがモデル設定ファイルを
 #   読み込むように修正し、PlannerSNNの初期化に必要なパラメータが渡されるようにした。
+#
+# 改善点 (v14):
+# - 性能証明のワークフローを統一するため、`benchmark`コマンドグループを正式に実装。
+#   - `benchmark train`: 分類タスク用のモデルを訓練する。
+#   - `benchmark run`: 訓練済みモデルでベンチマークを測定する。
 
 import sys
 from pathlib import Path
@@ -54,6 +51,9 @@ app.add_typer(emergent_app, name="emergent-system")
 
 brain_app = typer.Typer(help="人工脳シミュレーションを直接制御")
 app.add_typer(brain_app, name="brain")
+
+benchmark_app = typer.Typer(help="ベンチマークの実行と関連タスク")
+app.add_typer(benchmark_app, name="benchmark")
 
 
 @agent_app.command("solve", help="指定されたタスクを解決します。専門家モデルの検索、オンデマンド学習、推論を実行します。")
@@ -115,7 +115,6 @@ def planner_execute(
     else:
         print("\n" + "="*20 + " ❌ TASK FAILED " + "="*20)
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 def get_life_form_instance(model_config_path: str):
     """DigitalLifeFormのインスタンスを、依存関係を注入して生成する。"""
     # 必要なモジュールを関数内でインポート
@@ -189,7 +188,6 @@ def life_form_explain(
     else:
         print("説明の生成に失敗しました。")
     print("="*64)
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 @evolve_app.command("run", help="自己進化サイクルを1回実行します。AIが自身の性能を評価し、アーキテクチャを改善します。")
 def evolve_run(
@@ -376,6 +374,48 @@ def brain_loop(
             break
     print("\n👋 対話ループを終了しました。")
 
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+@benchmark_app.command("train", help="ベンチマーク用の分類モデルを訓練します。")
+def benchmark_train(
+    task: str = typer.Option("sst2", help="訓練対象のタスク名 (例: sst2)"),
+    epochs: int = typer.Option(5, help="訓練エポック数"),
+):
+    """scripts/train_classifier.py を実行するラッパー。"""
+    import scripts.train_classifier as classifier_trainer
+    original_argv = sys.argv
+    sys.argv = [
+        "scripts/train_classifier.py",
+        "--task", task,
+        "--epochs", str(epochs),
+    ]
+    try:
+        classifier_trainer.main()
+    finally:
+        sys.argv = original_argv
+
+@benchmark_app.command("run", help="訓練済みモデルでベンチマークを測定します。")
+def benchmark_run(
+    task: str = typer.Option("sst2", help="評価対象のタスク名 (例: sst2)"),
+    model_path: Optional[Path] = typer.Option(None, help="評価する訓練済みモデルのパス"),
+):
+    """scripts/run_benchmark.py を実行するラッパー。"""
+    import scripts.run_benchmark as benchmark_runner
+    original_argv = sys.argv
+    
+    run_args = [
+        "scripts/run_benchmark.py",
+        "--task", task,
+    ]
+    if model_path:
+        run_args.extend(["--model_path", str(model_path)])
+
+    sys.argv = run_args
+    try:
+        benchmark_runner.main()
+    finally:
+        sys.argv = original_argv
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+
 @app.command(
     "gradient-train",
     help="""
@@ -402,3 +442,25 @@ def gradient_train(ctx: typer.Context):
 
 if __name__ == "__main__":
     app()
+```
+
+---
+### **指示：性能証明の再実行**
+
+お手数をおかけして申し訳ありませんでした。修正した`snn-cli.py`を使って、再度、性能証明の2ステップを実行してください。
+
+#### **ステップ1：SNNモデルの訓練**
+
+まず、`benchmark train` コマンドでSST-2タスクのSNNモデルを訓練します。
+
+```bash
+python snn-cli.py benchmark train --task sst2 --epochs 5
+```
+
+#### **ステップ2：訓練済みモデルによるベンチマーク測定**
+
+次に、`benchmark run` コマンドで、ステップ1で保存された**学習済みモデル** (`runs/classifiers/sst2/best_model.pth`) を使ってベンチマークを測定します。
+
+```bash
+python snn-cli.py benchmark run --task sst2 --model-path runs/classifiers/sst2/best_model.pth
+
