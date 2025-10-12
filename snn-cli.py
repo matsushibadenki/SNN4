@@ -192,36 +192,27 @@ def evolve_run(
 def rl_run(
     episodes: int = typer.Option(500, help="学習エピソード数"),
     grid_size: int = typer.Option(5, help="グリッドワールドのサイズ"),
-    max_steps: int = typer.Option(50, help="1エピソードあたりの最大ステップ数")
+    max_steps: int = typer.Option(50, help="1エピソードあたりの最大ステップ数"),
+    output_dir: str = typer.Option("runs/rl_results_cli", help="結果を保存するディレクトリ"),
 ):
-    from tqdm import tqdm
-    from snn_research.rl_env.grid_world import GridWorldEnv
-    from snn_research.agent.reinforcement_learner_agent import ReinforcementLearnerAgent
+    import subprocess
+    print(f"🚀 強化学習スクリプト 'run_rl_agent.py' を呼び出します...")
     
-    device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
-    env = GridWorldEnv(size=grid_size, max_steps=max_steps, device=device)
-    agent = ReinforcementLearnerAgent(input_size=4, output_size=4, device=device)
+    command = [
+        sys.executable, # 現在のPythonインタプリタを使用
+        "run_rl_agent.py",
+        "--episodes", str(episodes),
+        "--grid_size", str(grid_size),
+        "--max_steps", str(max_steps),
+        "--output_dir", output_dir
+    ]
     
-    progress_bar = tqdm(range(episodes))
-    total_rewards = []
-
-    for episode in progress_bar:
-        state = env.reset()
-        done = False
-        episode_reward = 0.0
-        while not done:
-            action = agent.get_action(state)
-            next_state, reward, done = env.step(action)
-            agent.learn(reward)
-            episode_reward += reward
-            state = next_state
-        
-        total_rewards.append(episode_reward)
-        avg_reward = sum(total_rewards[-10:]) / len(total_rewards[-10:])
-        progress_bar.set_postfix({"Avg Reward (last 10)": f"{avg_reward:.3f}"})
-    
-    final_avg_reward = sum(total_rewards) / episodes if episodes > 0 else 0.0
-    print(f"\n✅ 学習完了。最終的な平均報酬: {final_avg_reward:.4f}")
+    try:
+        subprocess.run(command, check=True)
+        print(f"\n✅ 強化学習が完了しました。結果は '{output_dir}' を確認してください。")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"\n❌ 強化学習スクリプトの実行に失敗しました: {e}")
+        print("   プロジェクトルートからコマンドを実行していることを確認してください。")
 
 @ui_app.command("start", help="標準のGradio UIを起動します。")
 def ui_start(
