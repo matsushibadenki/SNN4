@@ -8,6 +8,7 @@
 # 修正点: mypyエラー [arg-type] を解消するため、nlargestのキーをlambda式に変更。
 # 改善点(v2): スパイクベースのメッセージを受信・処理する機能を追加。
 # 修正点(v3): SpikeEncoderDecoderのAPI変更に合わせて、メソッド呼び出しを修正。
+# 修正点(v4): mypyエラー[attr-defined]を修正。
 
 from typing import Dict, Any, Optional, List
 import asyncio
@@ -57,25 +58,22 @@ class AutonomousAgent:
         他のエージェントから送信されたスパイクメッセージを受信し、解釈して記憶する。
         """
         print(f"📡 Agent '{self.name}' received a spike message from '{source_agent}'.")
-        # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
         decoded_message = self.spike_communicator.decode_data(spike_pattern)
-        # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
 
         if decoded_message and isinstance(decoded_message, dict) and "error" not in decoded_message:
             print(f"  - Decoded Intent: {decoded_message.get('intent')}")
             print(f"  - Decoded Payload: {decoded_message.get('payload')}")
             
-            # 受信した情報を経験として自身の長期記憶に記録
             self.memory.record_experience(
                 state=self.current_state,
                 action="receive_communication",
                 result={"decoded_message": decoded_message, "source": source_agent},
-                reward={"external": 0.2}, # 情報受信はポジティブな報酬
+                reward={"external": 0.2},
                 expert_used=["spike_communicator"],
                 decision_context={"reason": "Inter-agent communication received."}
             )
         else:
-            raw_text = decoded_message.get('raw_text', str(decoded_message)) if isinstance(decoded_message, dict) else str(decoded_message)
+            raw_text = decoded_message if isinstance(decoded_message, str) else str(decoded_message)
             print(f"  - Failed to decode spike message. Raw content: {raw_text}")
 
     def execute(self, task_description: str) -> str:
@@ -117,7 +115,6 @@ class AutonomousAgent:
             print(f"最適な専門家が見つかりませんでした: {safe_task_description}")
             return None
 
-        # 精度とエネルギーの条件を満たすモデルを探す
         for expert in candidate_experts:
             metrics = expert.get("metrics", {})
             accuracy = metrics.get("accuracy", 0.0)
@@ -163,11 +160,8 @@ class AutonomousAgent:
     def _search_for_urls(self, query: str) -> list[str]:
         """
         指定されたクエリでWebを検索し、関連するURLのリストを返す。
-        (改善: ダミー実装からgoogle_searchツールのシミュレーションに置き換え)
         """
         print(f"🔍 Searching the web for: '{query}'")
-        # ここでは実際のAPI呼び出しの代わりに、以前のツール実行結果をシミュレートします。
-        # 実際の環境では `Google Search` を呼び出します。
         search_results = [
             'https://www.nature.com/articles/s41583-024-00888-x',
             'https://www.frontiersin.org/articles/10.3389/fnins.2023.1209795/full',
@@ -179,14 +173,11 @@ class AutonomousAgent:
     def _summarize(self, text: str, num_sentences: int = 3) -> str:
         """
         テキストを受け取り、簡単な抽出型要約を生成する。
-        (改善: ダミー実装から具体的な要約ロジックに置き換え)
         """
-        # 1. テキストを文に分割
         sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
         if not sentences:
             return ""
 
-        # 2. 各文の重要度をスコアリング (単純な単語頻度に基づく)
         words = re.findall(r'\w+', text.lower())
         word_freq = Counter(words)
         sentence_scores: Dict[int, float] = {}
@@ -195,7 +186,6 @@ class AutonomousAgent:
             score = sum(word_freq[word] for word in sentence_words)
             sentence_scores[i] = score / len(sentence_words) if sentence_words else 0
 
-        # 3. スコアの高い文を抽出
         highest_scoring_indices = nlargest(num_sentences, sentence_scores, key=lambda k: sentence_scores[k])
         summary_sentences = [sentences[i] for i in sorted(highest_scoring_indices)]
         
@@ -325,3 +315,4 @@ class AutonomousAgent:
         except Exception as e:
             print(f"\n❌ Inference failed: {e}")
             self.memory.record_experience(self.current_state, "inference", {"error": str(e)}, {"external": -0.5}, [model_id] if model_id != 'N/A' else [], {})
+
