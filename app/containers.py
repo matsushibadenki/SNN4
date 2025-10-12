@@ -65,10 +65,19 @@ from snn_research.cognitive_architecture.cerebellum import Cerebellum
 from snn_research.cognitive_architecture.motor_cortex import MotorCortex
 from snn_research.cognitive_architecture.hybrid_perception_cortex import HybridPerceptionCortex
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 from snn_research.benchmark import TASK_REGISTRY
 from .utils import get_auto_device
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+
+
+from snn_research.agent.digital_life_form import DigitalLifeForm
+from snn_research.agent.autonomous_agent import AutonomousAgent
+from snn_research.agent.reinforcement_learner_agent import ReinforcementLearnerAgent
+from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
+from snn_research.cognitive_architecture.intrinsic_motivation import IntrinsicMotivationSystem
+from snn_research.cognitive_architecture.meta_cognitive_snn import MetaCognitiveSNN
+from snn_research.cognitive_architecture.physics_evaluator import PhysicsEvaluator
+from snn_research.cognitive_architecture.symbol_grounding import SymbolGrounding
+
 
 if TYPE_CHECKING:
     from .adapters.snn_langchain_adapter import SNNLangChainAdapter
@@ -381,6 +390,9 @@ class BrainContainer(containers.DeclarativeContainer):
     """人工脳（ArtificialBrain）とその全コンポーネントの依存関係を管理するコンテナ。"""
     config = providers.Configuration()
     agent_container = providers.Container(AgentContainer, config=config)
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓AppContainerへの参照を追加↓◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    app_container = providers.Container(AppContainer, config=config)
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑AppContainerへの参照を追加↑◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     # --- IO Modules ---
     num_neurons = providers.Factory(lambda: 256) # 設定ファイルから読むように変更も可能
@@ -426,4 +438,44 @@ class BrainContainer(containers.DeclarativeContainer):
         basal_ganglia=basal_ganglia,
         cerebellum=cerebellum,
         motor_cortex=motor_cortex
+    )
+
+    autonomous_agent = providers.Singleton(
+        AutonomousAgent,
+        name="AutonomousAgent",
+        planner=agent_container.hierarchical_planner,
+        model_registry=agent_container.model_registry,
+        memory=agent_container.memory,
+        web_crawler=agent_container.web_crawler
+    )
+
+    rl_agent = providers.Singleton(
+        ReinforcementLearnerAgent,
+        input_size=4,
+        output_size=4,
+        device=agent_container.device
+    )
+
+    self_evolving_agent = providers.Singleton(
+        SelfEvolvingAgent,
+        name="SelfEvolvingAgent",
+        planner=agent_container.hierarchical_planner,
+        model_registry=agent_container.model_registry,
+        memory=agent_container.memory,
+        web_crawler=agent_container.web_crawler,
+        model_config_path="configs/models/small.yaml",
+        training_config_path="configs/base_config.yaml"
+    )
+
+    digital_life_form = providers.Singleton(
+        DigitalLifeForm,
+        autonomous_agent=autonomous_agent,
+        rl_agent=rl_agent,
+        self_evolving_agent=self_evolving_agent,
+        motivation_system=providers.Singleton(IntrinsicMotivationSystem),
+        meta_cognitive_snn=providers.Singleton(MetaCognitiveSNN),
+        memory=agent_container.memory,
+        physics_evaluator=providers.Singleton(PhysicsEvaluator),
+        symbol_grounding=providers.Singleton(SymbolGrounding, rag_system=agent_container.rag_system),
+        langchain_adapter=app_container.langchain_adapter
     )
