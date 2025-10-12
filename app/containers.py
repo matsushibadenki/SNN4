@@ -4,6 +4,7 @@
 #       不足しているすべてのモジュールのインポート文を追加。
 # 修正: PlannerSNNのインスタンス生成時の依存関係の解決方法を修正し、
 #       設定値がNoneになる問題を解消。
+# 修正(v2): ImportErrorを解消するため、TASK_REGISTRYのプロバイダを追加。
 
 import torch
 from dependency_injector import containers, providers
@@ -61,8 +62,11 @@ from snn_research.cognitive_architecture.amygdala import Amygdala
 from snn_research.cognitive_architecture.basal_ganglia import BasalGanglia
 from snn_research.cognitive_architecture.cerebellum import Cerebellum
 from snn_research.cognitive_architecture.motor_cortex import MotorCortex
-from snn_research.cognitive_architecture.hybrid_perception_cortex import HybridPerceptionCortex # 追加
+from snn_research.cognitive_architecture.hybrid_perception_cortex import HybridPerceptionCortex
 
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from snn_research.benchmark import TASK_REGISTRY
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 if TYPE_CHECKING:
     from .adapters.snn_langchain_adapter import SNNLangChainAdapter
@@ -104,6 +108,11 @@ def _load_planner_snn_factory(planner_snn_instance, model_path: str, device: str
 class TrainingContainer(containers.DeclarativeContainer):
     """学習に関連するオブジェクトの依存関係を管理するコンテナ。"""
     config = providers.Configuration()
+
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    # --- Benchmark Task Registry ---
+    task_registry = providers.Object(TASK_REGISTRY)
+    # ◾️◾️◾️◾️◾◾️◾️◾️◾️◾️◾️️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     # --- 共通ツール ---
     device = providers.Factory(get_auto_device)
@@ -333,14 +342,12 @@ class AgentContainer(containers.DeclarativeContainer):
     )
 
     # --- 学習済みプランナーモデルのプロバイダ ---
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     loaded_planner_snn = providers.Singleton(
         _load_planner_snn_factory,
         planner_snn_instance=training_container.planner_snn,
         model_path=config.training.planner.model_path,
         device=device,
     )
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     
     hierarchical_planner = providers.Factory(
         HierarchicalPlanner,
