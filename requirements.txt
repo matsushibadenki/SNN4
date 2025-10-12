@@ -24,3 +24,5 @@ tqdm
 beautifulsoup4
 requests
 langchain-huggingface
+langchain-huggingface
+googlesearch-python
