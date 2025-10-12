@@ -4,10 +4,11 @@
 #          呼び出すように修正。
 # 改善点(v2): ROADMAPフェーズ2に基づき、Amygdalaからの情動出力を
 #            BasalGangliaの行動選択に伝達するよう修正。
-# 修正点(v3): mypyが検出したファイル末尾の不要な括弧を削除。
+# 改善点(v3): ROADMAPフェーズ3に基づき、記憶の固定と能動的想起のプロセスを実装。
 
 from typing import Dict, Any, List
 import asyncio
+import re
 
 # IO and encoding
 from snn_research.io.sensory_receptor import SensoryReceptor
@@ -68,6 +69,7 @@ class ArtificialBrain:
         self.global_context: Dict[str, Any] = {
             "internal_state": {}, "external_request": None
         }
+        self.cycle_count = 0
         print("✅ 人工脳システムの全モジュールが正常に起動しました。")
 
     def run_cognitive_cycle(self, raw_input: Any):
@@ -75,14 +77,13 @@ class ArtificialBrain:
         外部からの感覚入力（テキストなど）を受け取り、
         知覚から行動までの一連の認知プロセスを実行する。
         """
-        print(f"\n--- 🧠 新しい認知サイクルを開始 --- \n入力: '{raw_input}'")
+        self.cycle_count += 1
+        print(f"\n--- 🧠 新しい認知サイクルを開始 ({self.cycle_count}) --- \n入力: '{raw_input}'")
         
+        # ... (感覚入力から知覚、短期記憶への保存までのプロセスは変更なし) ...
         sensory_info = self.receptor.receive(raw_input)
         spike_pattern = self.encoder.encode(sensory_info, duration=50)
-
-        # 知覚と同時に学習も行うメソッドを呼び出す
         perception_result = self.perception.perceive_and_learn(spike_pattern)
-        
         episode = {'type': 'perception', 'content': perception_result, 'source_input': raw_input}
         self.hippocampus.store_episode(episode)
 
@@ -93,10 +94,14 @@ class ArtificialBrain:
         self.global_context['recent_memory'] = self.hippocampus.retrieve_recent_episodes(1)
         goal = self.pfc.decide_goal(self.global_context)
         
-        plan = asyncio.run(self.planner.create_plan(goal))
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # 能動的想起: 計画立案のために長期記憶から関連知識を検索
+        knowledge_context = self._active_recall(goal)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        
+        plan = asyncio.run(self.planner.create_plan(goal, context=knowledge_context))
         action_candidates = self._convert_plan_to_candidates(plan)
         
-        # 行動選択の際に、現在の情動状態を伝達する
         selected_action = self.basal_ganglia.select_action(action_candidates, emotion_context=emotion)
 
         if selected_action:
@@ -104,7 +109,34 @@ class ArtificialBrain:
             command_logs = self.motor.execute_commands(motor_commands)
             self.actuator.run_command_sequence(command_logs)
 
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # 記憶の固定: 一定サイクルごとに短期記憶を長期記憶に転送
+        if self.cycle_count % 5 == 0: # 5サイクルごとに実行
+            self.consolidate_memories()
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️
+
         print("--- ✅ 認知サイクル完了 ---")
+        
+    def _active_recall(self, goal: str) -> str:
+        """長期記憶から目標に関連する知識を検索し、文脈として整形する。"""
+        keywords = set(re.findall(r'\b[a-zA-Z]{5,}\b', goal.lower()))
+        retrieved_knowledge = ""
+        for keyword in keywords:
+            knowledge = self.cortex.retrieve_knowledge(keyword)
+            if knowledge:
+                retrieved_knowledge += f"過去の知識'{keyword}': {knowledge}\n"
+        
+        if retrieved_knowledge:
+            print(f"📖 長期記憶から関連知識を想起しました。")
+        return retrieved_knowledge
+
+    def consolidate_memories(self):
+        """短期記憶（海馬）を長期記憶（大脳皮質）に固定化する。"""
+        print("\n--- 🧠 記憶の固定プロセスを開始 ---")
+        episodes_to_consolidate = self.hippocampus.get_and_clear_episodes_for_consolidation()
+        for episode in episodes_to_consolidate:
+            self.cortex.consolidate_memory(episode)
+        print("--- ✅ 記憶の固定プロセス完了 ---\n")
 
     def _convert_plan_to_candidates(self, plan) -> List[Dict[str, Any]]:
         """プランナーからの計画を、大脳基底核が解釈できる行動候補リストに変換する。"""
