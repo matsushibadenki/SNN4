@@ -1,7 +1,9 @@
-# ファイルパス: snn/snn_research/training/trainers.py
+# ファイルパス: snn_research/training/trainers.py
 # (修正)
 # 修正点: mypyエラー [call-arg] を解消するため、DistillationTrainer内の
 #         未使用かつ型推論を混乱させていた train メソッドを削除。
+# 修正点(v2): PyTorchのUserWarningを解消するため、train_epochメソッド内の
+#            scheduler.step()の呼び出し方を修正。
 
 import torch
 import torch.nn as nn
@@ -126,7 +128,11 @@ class BreakthroughTrainer:
             for key, value in metrics.items(): total_metrics[key] += value
             progress_bar.set_postfix({k: v / (progress_bar.n + 1) for k, v in total_metrics.items()})
 
-        if self.scheduler: self.scheduler.step()
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # PyTorchのUserWarningを解消するため、引数なしでstep()を呼び出す
+        if self.scheduler:
+            self.scheduler.step()
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         avg_metrics = {key: value / num_batches for key, value in total_metrics.items()}
         
@@ -213,10 +219,8 @@ class BreakthroughTrainer:
         return start_epoch
 
 class DistillationTrainer(BreakthroughTrainer):
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     # mypyエラー[call-arg]の原因となっていた未使用のtrainメソッドを削除。
     # 親クラスのtrain_epochが直接使用される。
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def _run_step(self, batch: Tuple[torch.Tensor, ...], is_train: bool) -> Dict[str, Any]:
         functional.reset_net(self.model)
