@@ -8,6 +8,7 @@
 #            記録・描画機能を追加。
 # 修正点(v4): mypyエラー[union-attr]および[operator]を解消するため、
 #            可視化ロジックをPyTorchのフックを用いた安全な実装に変更。
+# 修正点(v5): EWC実装時のコピー＆ペーストミスに起因するmypyエラーを修正。
 
 import torch
 import torch.nn as nn
@@ -41,7 +42,7 @@ class BreakthroughTrainer:
                  grad_clip_norm: float, rank: int, use_amp: bool, log_dir: str,
                  astrocyte_network: Optional[AstrocyteNetwork] = None,
                  meta_cognitive_snn: Optional[MetaCognitiveSNN] = None,
-                 enable_visualization: bool = True):
+                 enable_visualization: bool = True): # 可視化フラグを追加
         self.model = model
         self.device = device
         self.optimizer = optimizer
@@ -75,9 +76,10 @@ class BreakthroughTrainer:
 
         input_ids, target_ids = [t.to(self.device) for t in batch[:2]]
         
+        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
         # 可視化のためのフックを設定
         hooks = []
-        if not is_train and self.enable_visualization and self.rank in [-1, 0]:
+        if not is_train and self.enable_visualization and self.rank in [-1, 0] and hasattr(self, 'recorder'):
             self.recorder.clear()
             model_to_run = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
             
@@ -103,52 +105,18 @@ class BreakthroughTrainer:
                 if isinstance(module, AdaptiveLIFNeuron):
                     hooks.append(module.register_forward_hook(record_hook))
                     break # 1層のみ記録
+        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
 
-    def _compute_ewc_fisher_matrix(self, dataloader: DataLoader, task_name: str):
-        """EWCのためのFisher情報行列を計算し、損失関数に設定する。"""
-        print(f"🧠 Computing Fisher Information Matrix for EWC (task: {task_name})...")
-        self.model.eval()
-        
-        fisher_matrix: Dict[str, torch.Tensor] = {}
-        for name, param in self.model.named_parameters():
-            fisher_matrix[name] = torch.zeros_like(param.data)
-
-        for batch in tqdm(dataloader, desc=f"Computing Fisher Matrix for {task_name}"):
-            self.model.zero_grad()
-            input_ids, target_ids = [t.to(self.device) for t in batch[:2]]
-            
-            logits, _, _ = self.model(input_ids)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_ids.view(-1))
-            loss.backward()
-            
-            for name, param in self.model.named_parameters():
-                if param.grad is not None:
-                    fisher_matrix[name] += param.grad.data.pow(2) / len(dataloader)
-
-        # 計算したFisher行列と現在の最適なパラメータを損失関数に保存
-        if isinstance(self.criterion, CombinedLoss):
-            self.criterion.fisher_matrix.update(fisher_matrix)
-            for name, param in self.model.named_parameters():
-                self.criterion.optimal_params[name] = param.data.clone()
-            
-            # ディスクにも保存して永続化
-            ewc_data_path = Path(self.distillation_trainer.writer.log_dir) / f"ewc_data_{task_name}.pt"
-            torch.save({
-                'fisher_matrix': self.criterion.fisher_matrix,
-                'optimal_params': self.criterion.optimal_params
-            }, ewc_data_path)
-            print(f"✅ EWC Fisher matrix and optimal parameters for '{task_name}' saved to '{ewc_data_path}'.")
-
-    def _run_step(self, batch: Tuple[torch.Tensor, ...], is_train: bool) -> Dict[str, Any]:
-        # ... (前半の処理は変更なし) ...
         with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
             with torch.set_grad_enabled(is_train):
                 logits, spikes, mem = self.model(input_ids, return_spikes=True, return_full_mems=True)
                 loss_dict = self.criterion(logits, target_ids, spikes, mem, self.model)
         
+        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
         # フォワードパス後にフックを削除
         for hook in hooks:
             hook.remove()
+        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
 
         if is_train:
             self.optimizer.zero_grad()
@@ -301,11 +269,43 @@ class BreakthroughTrainer:
         start_epoch = checkpoint.get('epoch', 0) + 1
         print(f"✅ チェックポイント '{path}' を正常にロードしました。Epoch {start_epoch} から学習を再開します。")
         return start_epoch
+    
+    def _compute_ewc_fisher_matrix(self, dataloader: DataLoader, task_name: str):
+        """EWCのためのFisher情報行列を計算し、損失関数に設定する。"""
+        print(f"🧠 Computing Fisher Information Matrix for EWC (task: {task_name})...")
+        self.model.eval()
+        
+        fisher_matrix: Dict[str, torch.Tensor] = {}
+        for name, param in self.model.named_parameters():
+            fisher_matrix[name] = torch.zeros_like(param.data)
+
+        for batch in tqdm(dataloader, desc=f"Computing Fisher Matrix for {task_name}"):
+            self.model.zero_grad()
+            input_ids, target_ids = [t.to(self.device) for t in batch[:2]]
+            
+            logits, _, _ = self.model(input_ids)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_ids.view(-1))
+            loss.backward()
+            
+            for name, param in self.model.named_parameters():
+                if param.grad is not None:
+                    fisher_matrix[name] += param.grad.data.pow(2) / len(dataloader)
+
+        # 計算したFisher行列と現在の最適なパラメータを損失関数に保存
+        if isinstance(self.criterion, CombinedLoss):
+            self.criterion.fisher_matrix.update(fisher_matrix)
+            for name, param in self.model.named_parameters():
+                self.criterion.optimal_params[name] = param.data.clone()
+            
+            # ディスクにも保存して永続化
+            ewc_data_path = Path(self.writer.log_dir) / f"ewc_data_{task_name}.pt"
+            torch.save({
+                'fisher_matrix': self.criterion.fisher_matrix,
+                'optimal_params': self.criterion.optimal_params
+            }, ewc_data_path)
+            print(f"✅ EWC Fisher matrix and optimal parameters for '{task_name}' saved to '{ewc_data_path}'.")
 
 class DistillationTrainer(BreakthroughTrainer):
-    # mypyエラー[call-arg]の原因となっていた未使用のtrainメソッドを削除。
-    # 親クラスのtrain_epochが直接使用される。
-
     def _run_step(self, batch: Tuple[torch.Tensor, ...], is_train: bool) -> Dict[str, Any]:
         functional.reset_net(self.model)
         if is_train: self.model.train()
@@ -330,8 +330,6 @@ class DistillationTrainer(BreakthroughTrainer):
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
             self.scaler.step(self.optimizer)
             self.scaler.update()
-            
-            # if self.astrocyte_network: self.astrocyte_network.step()
         
         with torch.no_grad():
             preds = torch.argmax(student_logits, dim=-1)
@@ -379,9 +377,6 @@ class PhysicsInformedTrainer(BreakthroughTrainer):
                 if self.grad_clip_norm > 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
                 self.optimizer.step()
-            
-            # if self.astrocyte_network:
-            #     self.astrocyte_network.step()
 
         with torch.no_grad():
             preds = torch.argmax(logits, dim=-1)
