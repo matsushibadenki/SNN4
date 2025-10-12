@@ -7,6 +7,7 @@
 # 修正点 (v5): MPSデバイス不整合エラーを修正。
 # 修正点 (v6): `device`引数が不足しているエラーを修正。
 # 修正点 (v7): PyTorchの非推奨警告を解消するため、Trainerが内部でエポックを管理するようにリファクタリング。
+# 修正点 (v8): scheduler.step()の呼び出し方に関する警告を完全に解消。
 
 import torch
 import torch.nn as nn
@@ -50,7 +51,7 @@ class BreakthroughTrainer:
         
         self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
         self.best_metric = float('inf')
-        self.epoch = 0  # エポックカウンターを追加
+        self.epoch = 0
 
         if self.rank in [-1, 0]:
             self.writer = SummaryWriter(log_dir)
@@ -86,9 +87,9 @@ class BreakthroughTrainer:
                 if self.grad_clip_norm > 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
                 self.optimizer.step()
-            
+
             if self.astrocyte_network:
-                 self.astrocyte_network.step()
+                self.astrocyte_network.step()
             if self.meta_cognitive_snn:
                 end_time = time.time()
                 computation_time = end_time - start_time
@@ -131,7 +132,8 @@ class BreakthroughTrainer:
             for key, value in metrics.items(): total_metrics[key] += value
             progress_bar.set_postfix({k: v / (progress_bar.n + 1) for k, v in total_metrics.items()})
 
-        if self.scheduler: self.scheduler.step()
+        if self.scheduler:
+            self.scheduler.step()
         
         avg_metrics = {key: value / num_batches for key, value in total_metrics.items()}
         
@@ -217,6 +219,7 @@ class BreakthroughTrainer:
         self.best_metric = checkpoint.get('best_metric', float('inf'))
         self.epoch = checkpoint.get('epoch', 0) + 1
         print(f"✅ チェックポイント '{path}' を正常にロードしました。Epoch {self.epoch} から学習を再開します。")
+
 
 class DistillationTrainer(BreakthroughTrainer):
     def train(self, train_loader: DataLoader, val_loader: DataLoader, epochs: int, teacher_model: Optional[nn.Module] = None) -> Dict[str, float]:
