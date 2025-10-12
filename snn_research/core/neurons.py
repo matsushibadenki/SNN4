@@ -1,12 +1,8 @@
-# matsushibadenki/snn4/snn_research/core/neurons.py
-"""
-AdaptiveLIFNeuron and IzhikevichNeuron implementations based on expert feedback and documentation.
-- BPTT-enabled state updates
-- Correct surrogate gradient usage
-- Docstrings and type hints
-- Vectorized updates (batch x units)
-- device/dtype-aware
-"""
+# ファイルパス: snn_research/core/neurons.py
+# (修正)
+# 修正: 論文「Dynamic Threshold and Multi-level Attention」に基づき、
+#       AdaptiveLIFNeuronに動的発火閾値メカニズムを導入。
+
 from typing import Optional, Tuple
 import torch
 from torch import Tensor, nn
@@ -27,6 +23,9 @@ class AdaptiveLIFNeuron(base.MemoryModule):
         adaptation_strength: float = 0.1,
         target_spike_rate: float = 0.02,
         noise_intensity: float = 0.0,
+        # 論文に基づく動的閾値パラメータを追加
+        threshold_decay: float = 0.99,
+        threshold_step: float = 0.05,
     ):
         super().__init__()
         self.features = features
@@ -35,6 +34,10 @@ class AdaptiveLIFNeuron(base.MemoryModule):
         self.adaptation_strength = adaptation_strength
         self.target_spike_rate = target_spike_rate
         self.noise_intensity = noise_intensity
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.threshold_decay = threshold_decay
+        self.threshold_step = threshold_step
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         self.surrogate_function = surrogate.ATan(alpha=2.0)
 
         self.register_buffer("mem", None)
@@ -72,8 +75,12 @@ class AdaptiveLIFNeuron(base.MemoryModule):
         
         if self.training and self.noise_intensity > 0:
             self.mem += torch.randn_like(self.mem) * self.noise_intensity
-
+        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾◾️◾️◾️◾️
+        # 動的閾値の減衰
+        self.adaptive_threshold = self.adaptive_threshold * self.threshold_decay
         current_threshold = self.base_threshold + self.adaptive_threshold
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         spike = self.surrogate_function(self.mem - current_threshold)
         
         self.spikes = spike.mean(dim=0) if spike.ndim > 1 else spike
@@ -83,29 +90,30 @@ class AdaptiveLIFNeuron(base.MemoryModule):
 
         reset_mask = spike.detach() 
         self.mem = self.mem * (1.0 - reset_mask)
-
+        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # 論文のメカニズムに基づき、スパイク後に閾値を上昇させる
         if self.training:
             self.adaptive_threshold = (
-                self.adaptive_threshold * self.mem_decay + 
-                self.adaptation_strength * spike.detach()
+                self.adaptive_threshold + self.threshold_step * spike.detach()
             )
         else:
             with torch.no_grad():
-                self.adaptive_threshold = (
-                    self.adaptive_threshold * self.mem_decay + 
-                    self.adaptation_strength * spike
+                 self.adaptive_threshold = (
+                    self.adaptive_threshold + self.threshold_step * spike
                 )
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         return spike, self.mem
 
     def get_spike_rate_loss(self) -> torch.Tensor:
         """スパイク率の目標値からの乖離を損失として返す"""
         current_rate = self.spikes.mean()
-        # target_spike_rateがスカラー値であることを想定
         target = torch.tensor(self.target_spike_rate, device=current_rate.device)
         return F.mse_loss(current_rate, target)
 
 class IzhikevichNeuron(base.MemoryModule):
+    # (変更なし)
     """
     Izhikevich neuron model, capable of producing a wide variety of firing patterns.
     """
@@ -120,15 +128,10 @@ class IzhikevichNeuron(base.MemoryModule):
     ):
         super().__init__()
         self.features = features
-        # a: 回復変数uの時定数。小さいほど回復が遅い (e.g., 0.02 for regular spiking)
         self.a = a
-        # b: 膜電位vに対する回復変数uの感受性。大きいほどvとuの結合が強い (e.g., 0.2 for regular spiking)
         self.b = b
-        # c: スパイク後の膜電位vのリセット値 (e.g., -65 mV)
         self.c = c
-        # d: スパイク後の回復変数uの増加量 (e.g., 2 for regular spiking, 8 for chattering)
         self.d = d
-        # dt: シミュレーションの時間刻み幅
         self.dt = dt
         self.v_peak = 30.0
         self.surrogate_function = surrogate.ATan(alpha=2.0)
@@ -170,7 +173,6 @@ class IzhikevichNeuron(base.MemoryModule):
         self.v = torch.where(reset_mask, torch.full_like(self.v, self.c), self.v)
         self.u = torch.where(reset_mask, self.u + self.d, self.u)
         
-        # クランプ範囲は、発散を防ぎ、数値的安定性を保つためのものです。
         self.v = torch.clamp(self.v, min=-100.0, max=50.0)
 
         return spike, self.v
