@@ -40,7 +40,19 @@ def test_gradient_based_training(container: TrainingContainer):
     """勾配ベース学習の動作確認テスト。"""
     print("\n--- Testing: Gradient-based Training ---")
     container.config.training.paradigm.from_value("gradient_based")
-    trainer = container.standard_trainer()
+    
+    # --- ▼ 修正 ▼ ---
+    device = container.device()
+    model = container.snn_model().to(device)
+    optimizer = container.optimizer(params=model.parameters())
+    scheduler = container.scheduler(optimizer=optimizer)
+    trainer = container.standard_trainer(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device=device
+    )
+    # --- ▲ 修正 ▲ ---
     
     dummy_input = torch.randint(0, 100, (2, 4))
     dummy_target = torch.randint(0, 100, (2, 4))
@@ -55,8 +67,20 @@ def test_distillation_training(container: TrainingContainer):
     print("\n--- Testing: Distillation Training ---")
     container.config.training.paradigm.from_value("gradient_based")
     container.config.training.gradient_based.type.from_value("distillation")
-    trainer = container.distillation_trainer()
-    
+
+    # --- ▼ 修正 ▼ ---
+    device = container.device()
+    model = container.snn_model().to(device)
+    optimizer = container.optimizer(params=model.parameters())
+    scheduler = container.scheduler(optimizer=optimizer)
+    trainer = container.distillation_trainer(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device=device
+    )
+    # --- ▲ 修正 ▲ ---
+
     vocab_size = container.tokenizer().vocab_size
     dummy_input = torch.randint(0, vocab_size, (2, 4))
     dummy_target = torch.randint(0, vocab_size, (2, 4))
@@ -73,7 +97,19 @@ def test_physics_informed_training(container: TrainingContainer):
     """物理情報学習の動作確認テスト。"""
     print("\n--- Testing: Physics-informed Training ---")
     container.config.training.paradigm.from_value("physics_informed")
-    trainer = container.physics_informed_trainer()
+
+    # --- ▼ 修正 ▼ ---
+    device = container.device()
+    model = container.snn_model().to(device)
+    optimizer = container.pi_optimizer(params=model.parameters())
+    scheduler = container.pi_scheduler(optimizer=optimizer)
+    trainer = container.physics_informed_trainer(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device=device
+    )
+    # --- ▲ 修正 ▲ ---
     
     dummy_input = torch.randint(0, 100, (2, 4))
     dummy_target = torch.randint(0, 100, (2, 4))
