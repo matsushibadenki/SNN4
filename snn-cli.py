@@ -1,5 +1,8 @@
 # matsushibadenki/snn4/snn4-79496245059a9838ecdcdf953e28024581f28ba2/snn-cli.py
-# (省略)
+# Title: 統合CLIツール
+# Description:
+# - プロジェクトの全機能を一元的に管理・実行するためのコマンドラインインターフェース。
+#
 # 修正点 (v13):
 # - life-formコマンド実行時のTypeErrorを解消。get_life_form_instanceがモデル設定ファイルを
 #   読み込むように修正し、PlannerSNNの初期化に必要なパラメータが渡されるようにした。
@@ -8,6 +11,9 @@
 # - 性能証明のワークフローを統一するため、`benchmark`コマンドグループを正式に実装。
 #   - `benchmark train`: 分類タスク用のモデルを訓練する。
 #   - `benchmark run`: 訓練済みモデルでベンチマークを測定する。
+#
+# 修正点 (v15):
+# - SyntaxErrorを解消するため、ファイル末尾に誤って混入していたPythonコード以外の説明文を削除。
 
 import sys
 from pathlib import Path
@@ -374,7 +380,6 @@ def brain_loop(
             break
     print("\n👋 対話ループを終了しました。")
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 @benchmark_app.command("train", help="ベンチマーク用の分類モデルを訓練します。")
 def benchmark_train(
     task: str = typer.Option("sst2", help="訓練対象のタスク名 (例: sst2)"),
@@ -414,7 +419,6 @@ def benchmark_run(
         benchmark_runner.main()
     finally:
         sys.argv = original_argv
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 @app.command(
     "gradient-train",
@@ -442,25 +446,4 @@ def gradient_train(ctx: typer.Context):
 
 if __name__ == "__main__":
     app()
-```
-
----
-### **指示：性能証明の再実行**
-
-お手数をおかけして申し訳ありませんでした。修正した`snn-cli.py`を使って、再度、性能証明の2ステップを実行してください。
-
-#### **ステップ1：SNNモデルの訓練**
-
-まず、`benchmark train` コマンドでSST-2タスクのSNNモデルを訓練します。
-
-```bash
-python snn-cli.py benchmark train --task sst2 --epochs 5
-```
-
-#### **ステップ2：訓練済みモデルによるベンチマーク測定**
-
-次に、`benchmark run` コマンドで、ステップ1で保存された**学習済みモデル** (`runs/classifiers/sst2/best_model.pth`) を使ってベンチマークを測定します。
-
-```bash
-python snn-cli.py benchmark run --task sst2 --model-path runs/classifiers/sst2/best_model.pth
 
