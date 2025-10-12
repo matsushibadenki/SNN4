@@ -1,7 +1,8 @@
 # ファイルパス: app/containers.py
-# (修正 v11 - 最終修正)
-# 根本修正: pytest収集時に発生するすべての `TypeError: ... must be a mapping, not NoneType` を
+# (修正 v12 - 最終修正)
+# 根本修正: pytest収集時に発生するすべての `TypeError` 及び `AttributeError` を
 #           完全に解消するため、DIコンテナの定義方法を全面的に見直し、
+#           ライブラリのベストプラクティスに沿った形に修正。
 #           すべての設定値アクセスをオブジェクト生成時まで遅延させる記述に統一した。
 
 import torch
@@ -64,8 +65,7 @@ def get_auto_device() -> str:
     return "cpu"
 
 def _create_scheduler(optimizer: Optimizer, epochs: int, warmup_epochs: int) -> LRScheduler:
-    if epochs <= warmup_epochs:
-        warmup_epochs = 0
+    if epochs <= warmup_epochs: warmup_epochs = 0
     warmup_scheduler = LinearLR(optimizer=optimizer, start_factor=1e-3, total_iters=warmup_epochs)
     main_scheduler_t_max = max(1, epochs - warmup_epochs)
     main_scheduler = CosineAnnealingLR(optimizer=optimizer, T_max=main_scheduler_t_max)
@@ -78,8 +78,7 @@ def _load_planner_snn_factory(planner_snn_instance, model_path: str, device: str
             checkpoint = torch.load(model_path, map_location=device)
             state_dict = checkpoint.get('model_state_dict', checkpoint)
             model.load_state_dict(state_dict)
-        except Exception:
-            pass
+        except Exception: pass
     return model.to(device)
 
 
@@ -95,104 +94,87 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
 
     astrocyte_network = providers.Factory(AstrocyteNetwork, snn_model=snn_model)
-    meta_cognitive_snn = providers.Factory(MetaCognitiveSNN)
+    meta_cognitive_snn = providers.Factory(MetaCognitiveSNN, **providers.Dict(config.training.meta_cognition))
 
     # === Losses ===
-    standard_loss = providers.Factory(
-        CombinedLoss, tokenizer=tokenizer, 
-        ce_weight=config.training.gradient_based.loss.ce_weight,
-        spike_reg_weight=config.training.gradient_based.loss.spike_reg_weight,
-        mem_reg_weight=config.training.gradient_based.loss.mem_reg_weight,
-    )
-    distillation_loss = providers.Factory(
-        DistillationLoss, tokenizer=tokenizer,
-        ce_weight=config.training.gradient_based.distillation.loss.ce_weight,
-        distill_weight=config.training.gradient_based.distillation.loss.distill_weight,
-        spike_reg_weight=config.training.gradient_based.distillation.loss.spike_reg_weight,
-        mem_reg_weight=config.training.gradient_based.distillation.loss.mem_reg_weight,
-        temperature=config.training.gradient_based.distillation.loss.temperature,
-    )
-    physics_informed_loss = providers.Factory(
-        PhysicsInformedLoss, tokenizer=tokenizer,
-        ce_weight=config.training.physics_informed.loss.ce_weight,
-        spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight,
-        mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight,
-    )
-
-    # === Optimizers ===
-    grad_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate)
-    pi_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.physics_informed.learning_rate)
-
-    # === Schedulers ===
-    grad_scheduler = providers.Factory(_create_scheduler, optimizer=grad_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs)
-    pi_scheduler = providers.Factory(_create_scheduler, optimizer=pi_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs)
+    standard_loss = providers.Factory(CombinedLoss, tokenizer=tokenizer, **providers.Dict(config.training.gradient_based.loss))
+    distillation_loss = providers.Factory(DistillationLoss, tokenizer=tokenizer, **providers.Dict(config.training.gradient_based.distillation.loss))
+    physics_informed_loss = providers.Factory(PhysicsInformedLoss, tokenizer=tokenizer, **providers.Dict(config.training.physics_informed.loss))
 
     # === Trainers ===
-    standard_trainer = providers.Factory(
-        BreakthroughTrainer, model=snn_model, optimizer=grad_optimizer, criterion=standard_loss, scheduler=grad_scheduler, device=device,
-        grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
-        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
-    )
-
-    distillation_trainer = providers.Factory(
-        DistillationTrainer, model=snn_model, optimizer=grad_optimizer, criterion=distillation_loss, scheduler=grad_scheduler, device=device,
-        grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
-        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
-    )
-
-    physics_informed_trainer = providers.Factory(
-        PhysicsInformedTrainer, model=snn_model, optimizer=pi_optimizer, criterion=physics_informed_loss, scheduler=pi_scheduler, device=device,
-        grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp,
-        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
-    )
+    grad_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate)
+    grad_scheduler = providers.Factory(_create_scheduler, optimizer=grad_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs)
     
+    standard_trainer = providers.Factory(
+        BreakthroughTrainer, model=snn_model, optimizer=grad_optimizer, criterion=standard_loss, scheduler=grad_scheduler,
+        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
+        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
+    )
+    distillation_trainer = providers.Factory(
+        DistillationTrainer, model=snn_model, optimizer=grad_optimizer, criterion=distillation_loss, scheduler=grad_scheduler,
+        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
+        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
+    )
+
+    pi_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.physics_informed.learning_rate)
+    pi_scheduler = providers.Factory(_create_scheduler, optimizer=pi_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs)
+    
+    physics_informed_trainer = providers.Factory(
+        PhysicsInformedTrainer, model=snn_model, optimizer=pi_optimizer, criterion=physics_informed_loss, scheduler=pi_scheduler,
+        device=device, grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp,
+        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
+    )
+
     # === Bio Learning ===
     bio_learning_rule = providers.Factory(
         get_bio_learning_rule,
         name=config.training.biologically_plausible.learning_rule,
         params=config.training.biologically_plausible,
     )
-
     bio_snn_model = providers.Factory(
         BioSNN, layer_sizes=[10, 50, 2],
         neuron_params=config.training.biologically_plausible.neuron,
         learning_rule=bio_learning_rule,
         sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification
     )
-    
     particle_filter_trainer = providers.Factory(
-        ParticleFilterTrainer,
-        base_model=bio_snn_model,
-        config=config.training.biologically_plausible.particle_filter.as_dict(),
+        ParticleFilterTrainer, base_model=bio_snn_model,
+        config=config.training.biologically_plausible.particle_filter,
         device=device
     )
-
-    rl_environment = providers.Factory(GridWorldEnv, device=device)
     rl_agent = providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device)
+    rl_environment = providers.Factory(GridWorldEnv, device=device)
     bio_rl_trainer = providers.Factory(BioRLTrainer, agent=rl_agent, env=rl_environment)
-    
-    planner_snn = providers.Factory(PlannerSNN, vocab_size=providers.Callable(lambda t: len(t) if t else 50257, tokenizer.provided), d_model=config.model.d_model, d_state=config.model.d_state, num_layers=config.model.num_layers, time_steps=config.model.time_steps, n_head=config.model.n_head, num_skills=10)
-    planner_optimizer = providers.Factory(AdamW, lr=config.training.planner.learning_rate)
-    planner_loss = providers.Factory(PlannerLoss)
-    
+
+    # === Etc ===
     model_registry = providers.Selector(
         config.model_registry.provider,
         file=providers.Singleton(SimpleModelRegistry, registry_path=config.model_registry.file.path),
-        distributed=providers.Singleton(DistributedModelRegistry, registry_path=config.model_registry.file.path)
     )
 
 class AgentContainer(containers.DeclarativeContainer):
     config = providers.Configuration()
     training_container = providers.Container(TrainingContainer, config=config)
-
     device = providers.Factory(get_auto_device)
-    model_registry = training_container.model_registry
     web_crawler = providers.Singleton(WebCrawler)
-    rag_system = providers.Factory(RAGSystem, vector_store_path=providers.Callable(lambda log_dir: os.path.join(log_dir, "vector_store") if log_dir else "runs/vector_store", log_dir=config.training.log_dir))
-    memory = providers.Factory(Memory, memory_path=providers.Callable(lambda log_dir: os.path.join(log_dir, "agent_memory.jsonl") if log_dir else "runs/agent_memory.jsonl", log_dir=config.training.log_dir))
+    rag_system = providers.Factory(RAGSystem, vector_store_path=providers.Callable(os.path.join, config.training.log_dir, "vector_store"))
+    memory = providers.Factory(Memory, memory_path=providers.Callable(os.path.join, config.training.log_dir, "agent_memory.jsonl"))
     
-    loaded_planner_snn = providers.Singleton(_load_planner_snn_factory, planner_snn_instance=training_container.planner_snn, model_path=config.training.planner.model_path, device=device)
-    hierarchical_planner = providers.Factory(HierarchicalPlanner, model_registry=model_registry, rag_system=rag_system, planner_model=loaded_planner_snn, tokenizer_name=config.data.tokenizer_name, device=device)
+    planner_snn_unloaded = providers.Factory(
+        PlannerSNN, vocab_size=providers.Callable(len, training_container.tokenizer),
+        d_model=config.model.d_model, d_state=config.model.d_state, num_layers=config.model.num_layers,
+        time_steps=config.model.time_steps, n_head=config.model.n_head, num_skills=10
+    )
+    loaded_planner_snn = providers.Singleton(
+        _load_planner_snn_factory,
+        planner_snn_instance=planner_snn_unloaded,
+        model_path=config.training.planner.model_path,
+        device=device,
+    )
+    hierarchical_planner = providers.Factory(
+        HierarchicalPlanner, model_registry=training_container.model_registry, rag_system=rag_system,
+        planner_model=loaded_planner_snn, tokenizer_name=config.data.tokenizer_name, device=device
+    )
 
 class AppContainer(containers.DeclarativeContainer):
     config = providers.Configuration()
@@ -212,14 +194,10 @@ class BrainContainer(containers.DeclarativeContainer):
     spike_encoder = providers.Singleton(SpikeEncoder, num_neurons=num_neurons)
     actuator = providers.Singleton(Actuator, actuator_name="voice_synthesizer")
     perception_cortex = providers.Singleton(
-        HybridPerceptionCortex, 
-        num_neurons=num_neurons, 
-        feature_dim=64, 
-        som_map_size=(8, 8),
+        HybridPerceptionCortex, num_neurons=num_neurons, feature_dim=64, som_map_size=(8, 8),
         stdp_params=config.training.biologically_plausible.stdp,
     )
     prefrontal_cortex = providers.Singleton(PrefrontalCortex)
-    hierarchical_planner = agent_container.hierarchical_planner
     hippocampus = providers.Singleton(Hippocampus, capacity=50)
     cortex = providers.Singleton(Cortex)
     amygdala = providers.Singleton(Amygdala)
@@ -229,16 +207,9 @@ class BrainContainer(containers.DeclarativeContainer):
 
     artificial_brain = providers.Singleton(
         ArtificialBrain,
-        sensory_receptor=sensory_receptor,
-        spike_encoder=spike_encoder,
-        actuator=actuator,
-        perception_cortex=perception_cortex,
-        prefrontal_cortex=prefrontal_cortex,
-        hierarchical_planner=hierarchical_planner,
-        hippocampus=hippocampus,
-        cortex=cortex,
-        amygdala=amygdala,
-        basal_ganglia=basal_ganglia,
-        cerebellum=cerebellum,
-        motor_cortex=motor_cortex
+        sensory_receptor=sensory_receptor, spike_encoder=spike_encoder, actuator=actuator,
+        perception_cortex=perception_cortex, prefrontal_cortex=prefrontal_cortex,
+        hierarchical_planner=agent_container.hierarchical_planner,
+        hippocampus=hippocampus, cortex=cortex, amygdala=amygdala,
+        basal_ganglia=basal_ganglia, cerebellum=cerebellum, motor_cortex=motor_cortex
     )
