@@ -11,15 +11,14 @@ from transformers import PreTrainedTokenizerBase
 
 class CombinedLoss(nn.Module):
     """クロスエントロピー損失、各種正則化を組み合わせた損失関数。"""
-    def __init__(self, ce_weight: float, spike_reg_weight: float, mem_reg_weight: float, tokenizer: PreTrainedTokenizerBase, target_spike_rate: float = 0.02, **kwargs):
+    def __init__(self, ce_weight: float, spike_reg_weight: float, mem_reg_weight: float, tokenizer: PreTrainedTokenizerBase, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
         super().__init__()
         pad_id = tokenizer.pad_token_id
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-        # 【根本修正】ハードコードされていた無効化を削除。設定ファイルの値を尊重するように修正。
-        self.weights = {'ce': ce_weight, 'spike_reg': spike_reg_weight, 'mem_reg': mem_reg_weight}
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.weights = {'ce': ce_weight, 'spike_reg': spike_reg_weight, 'mem_reg': mem_reg_weight, 'ewc': ewc_weight}
         self.target_spike_rate = target_spike_rate
+        self.fisher_matrix: Dict[str, torch.Tensor] = {}
+        self.optimal_params: Dict[str, torch.Tensor] = {}
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor, spikes: torch.Tensor, mem: torch.Tensor, model: nn.Module, **kwargs) -> dict:
         ce_loss = self.ce_loss_fn(logits.view(-1, logits.size(-1)), targets.view(-1))
@@ -29,16 +28,29 @@ class CombinedLoss(nn.Module):
         
         mem_reg_loss = torch.mean(mem**2)
         
+        # --- ◾️◾️◾️◾️◾️↓追加↓◾️◾️◾️◾️◾️ ---
+        # EWC損失の計算
+        ewc_loss = torch.tensor(0.0, device=logits.device)
+        if self.weights['ewc'] > 0 and self.fisher_matrix:
+            for name, param in model.named_parameters():
+                if name in self.fisher_matrix:
+                    fisher = self.fisher_matrix[name]
+                    opt_param = self.optimal_params[name]
+                    ewc_loss += (fisher * (param - opt_param)**2).sum()
+        # --- ◾️◾️◾️◾️◾️↑追加↑◾️◾️◾️◾️◾️ ---
+
         total_loss = (self.weights['ce'] * ce_loss + 
                       self.weights['spike_reg'] * spike_reg_loss +
-                      self.weights['mem_reg'] * mem_reg_loss)
+                      self.weights['mem_reg'] * mem_reg_loss +
+                      self.weights['ewc'] * ewc_loss) # ◾️ EWC損失を追加
         
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'spike_reg_loss': spike_reg_loss,
-            'mem_reg_loss': mem_reg_loss, 'spike_rate': spike_rate
+            'mem_reg_loss': mem_reg_loss, 'spike_rate': spike_rate,
+            'ewc_loss': ewc_loss # ◾️ ログ用に損失を追加
         }
-
+        
 class DistillationLoss(nn.Module):
     """知識蒸留のための損失関数（各種正則化付き）。"""
     def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float, distill_weight: float,
