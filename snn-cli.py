@@ -7,6 +7,10 @@
 #
 # 改善点 (v12):
 # - ロードマップ フェーズ4 に基づき、人工脳シミュレーションを制御する `brain` コマンドグループを追加。
+#
+# 修正点 (v13):
+# - life-formコマンド実行時のTypeErrorを解消。get_life_form_instanceがモデル設定ファイルを
+#   読み込むように修正し、PlannerSNNの初期化に必要なパラメータが渡されるようにした。
 
 import sys
 from pathlib import Path
@@ -48,10 +52,8 @@ app.add_typer(ui_app, name="ui")
 emergent_app = typer.Typer(help="創発的なマルチエージェントシステムを操作")
 app.add_typer(emergent_app, name="emergent-system")
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 brain_app = typer.Typer(help="人工脳シミュレーションを直接制御")
 app.add_typer(brain_app, name="brain")
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 
 @agent_app.command("solve", help="指定されたタスクを解決します。専門家モデルの検索、オンデマンド学習、推論を実行します。")
@@ -113,7 +115,9 @@ def planner_execute(
     else:
         print("\n" + "="*20 + " ❌ TASK FAILED " + "="*20)
 
-def get_life_form_instance():
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+def get_life_form_instance(model_config_path: str):
+    """DigitalLifeFormのインスタンスを、依存関係を注入して生成する。"""
     # 必要なモジュールを関数内でインポート
     from app.containers import AgentContainer, AppContainer
     from snn_research.agent.digital_life_form import DigitalLifeForm
@@ -127,8 +131,11 @@ def get_life_form_instance():
 
     agent_container = AgentContainer()
     agent_container.config.from_yaml("configs/base_config.yaml")
+    agent_container.config.from_yaml(model_config_path) # モデル設定を読み込む
+
     app_container = AppContainer()
     app_container.config.from_yaml("configs/base_config.yaml")
+    app_container.config.from_yaml(model_config_path) # モデル設定を読み込む
 
     planner = agent_container.hierarchical_planner()
     model_registry = agent_container.model_registry()
@@ -162,14 +169,19 @@ def get_life_form_instance():
     )
 
 @life_form_app.command("start", help="意識ループを開始します。AIが自律的に思考・学習します。")
-def life_form_start(cycles: int = typer.Option(5, help="実行する意識サイクルの回数")):
-    life_form = get_life_form_instance()
+def life_form_start(
+    cycles: int = typer.Option(5, help="実行する意識サイクルの回数"),
+    model_config: Path = typer.Option("configs/models/small.yaml", help="モデルアーキテクチャ設定ファイル", exists=True),
+):
+    life_form = get_life_form_instance(str(model_config))
     life_form.awareness_loop(cycles=cycles)
 
 @life_form_app.command("explain-last-action", help="AI自身に、直近の行動理由を自然言語で説明させます。")
-def life_form_explain():
+def life_form_explain(
+    model_config: Path = typer.Option("configs/models/small.yaml", help="モデルアーキテクチャ設定ファイル", exists=True),
+):
     print("🤔 AIに自身の行動理由を説明させます...")
-    life_form = get_life_form_instance()
+    life_form = get_life_form_instance(str(model_config))
     explanation = life_form.explain_last_action()
     print("\n" + "="*20 + " 🤖 AIによる自己解説 " + "="*20)
     if explanation:
@@ -177,6 +189,7 @@ def life_form_explain():
     else:
         print("説明の生成に失敗しました。")
     print("="*64)
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 @evolve_app.command("run", help="自己進化サイクルを1回実行します。AIが自身の性能を評価し、アーキテクチャを改善します。")
 def evolve_run(
@@ -323,7 +336,6 @@ def emergent_execute(
     print(final_report)
     print("="*60)
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 @brain_app.command("run", help="単一の入力で人工脳の認知サイクルを1回実行します。")
 def brain_run(
     input_text: str = typer.Option(..., help="人工脳への感覚入力（テキスト）"),
@@ -363,7 +375,6 @@ def brain_loop(
         except KeyboardInterrupt:
             break
     print("\n👋 対話ループを終了しました。")
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 @app.command(
     "gradient-train",
