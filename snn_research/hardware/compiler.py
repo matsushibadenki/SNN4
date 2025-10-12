@@ -1,9 +1,11 @@
 # ファイルパス: snn_research/hardware/compiler.py
-# (修正)
+# (更新)
 # 修正: mypyエラーを解消するため、typing.castを使用してモジュールの型を明示的に指定。
+# 改善: ROADMAPフェーズ6に基づき、simulate_on_hardwareメソッドを実装。
 
 from typing import Dict, Any, List, cast
 import yaml
+import time
 
 from snn_research.bio_models.simple_network import BioSNN
 from snn_research.bio_models.lif_neuron import BioLIFNeuron
@@ -86,7 +88,7 @@ class NeuromorphicCompiler:
                 "source_core": i - 1 if i > 0 else "input",
                 "target_core": i,
                 "num_connections": len(connections),
-                "connections": connections
+                "connections": connections # For simulation purpose, store all connections
             })
         
         print(f"  - {len(model.weights)}個のシナプス接続をマッピングしました。")
@@ -96,3 +98,37 @@ class NeuromorphicCompiler:
             yaml.dump(hardware_config, f, default_flow_style=False, sort_keys=False)
 
         print(f"✅ コンパイル完了。ハードウェア構成を '{output_path}' に保存しました。")
+    
+    def simulate_on_hardware(self, compiled_config_path: str, total_spikes: int, time_steps: int) -> Dict[str, float]:
+        """
+        コンパイル済み設定に基づき、ハードウェア上での性能をシミュレートする。
+        """
+        print(f"\n--- ⚡️ ハードウェアシミュレーション開始 ({self.hardware_profile['name']}) ---")
+        
+        with open(compiled_config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        # 1. エネルギー消費の推定
+        #    総シナプス演算数 (Synaptic Operations) は、総スパイク数にほぼ比例する
+        energy_per_synop = self.hardware_profile['energy_per_synop']
+        estimated_energy = total_spikes * energy_per_synop
+        print(f"  - 総スパイク数: {total_spikes}")
+        print(f"  - シナプス演算あたりのエネルギー: {energy_per_synop:.2e} J")
+        print(f"  -推定総エネルギー消費: {estimated_energy:.2e} J")
+        
+        # 2. 処理時間の推定
+        #    これはハードウェアのクロック速度や並列性に大きく依存するため、単純なモデルを使用
+        #    (例: 1タイムステップあたり 1ms の処理時間と仮定)
+        time_per_step_ms = 1.0 
+        estimated_time_ms = time_steps * time_per_step_ms
+        print(f"  - タイムステップ数: {time_steps}")
+        print(f"  - ステップあたりの処理時間 (仮定): {time_per_step_ms} ms")
+        print(f"  - 推定処理時間: {estimated_time_ms} ms")
+
+        report = {
+            "estimated_energy_joules": estimated_energy,
+            "estimated_processing_time_ms": estimated_time_ms,
+            "total_spikes_simulated": total_spikes
+        }
+        print("--- ✅ シミュレーション完了 ---")
+        return report

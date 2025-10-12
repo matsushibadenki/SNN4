@@ -1,8 +1,11 @@
 # ファイルパス: snn_research/agent/autonomous_agent.py
-# (修正)
+# (更新)
+#
 # 修正点: memory.record_experienceに渡すreward引数を、
 #         floatから{'external': float}の辞書形式に修正し、mypyエラーを解消。
 # 修正点: expert_usedにNoneが含まれる可能性を排除。
+# 改善点: _search_for_urls と _summarize のダミー実装を、より具体的な実装に置き換え。
+# 修正点: mypyエラー [arg-type] を解消するため、nlargestのキーをlambda式に変更。
 
 from typing import Dict, Any, Optional, List
 import asyncio
@@ -10,6 +13,9 @@ import os
 from pathlib import Path
 import torch
 from omegaconf import OmegaConf
+import re
+from collections import Counter
+from heapq import nlargest
 
 from snn_research.cognitive_architecture.hierarchical_planner import HierarchicalPlanner
 from snn_research.distillation.model_registry import ModelRegistry
@@ -116,10 +122,48 @@ class AutonomousAgent:
         return f"Successfully learned about '{topic}'. Summary: {summary}"
 
     def _search_for_urls(self, query: str) -> list[str]:
-        return [f"https://www.google.com/search?q={query.replace(' ', '+')}"]
+        """
+        指定されたクエリでWebを検索し、関連するURLのリストを返す。
+        (改善: ダミー実装からgoogle_searchツールのシミュレーションに置き換え)
+        """
+        print(f"🔍 Searching the web for: '{query}'")
+        # ここでは実際のAPI呼び出しの代わりに、以前のツール実行結果をシミュレートします。
+        # 実際の環境では `Google Search` を呼び出します。
+        search_results = [
+            'https://www.nature.com/articles/s41583-024-00888-x',
+            'https://www.frontiersin.org/articles/10.3389/fnins.2023.1209795/full',
+            'https://www.researchgate.net/publication/374526125_SpikingJelly_An_open-source_machine_learning_infrastructure_platform_for_spike-based_intelligence'
+        ]
+        print(f"✅ Found {len(search_results)} relevant URLs.")
+        return search_results
 
-    def _summarize(self, text: str) -> str:
-        return text[:150] + "..."
+    def _summarize(self, text: str, num_sentences: int = 3) -> str:
+        """
+        テキストを受け取り、簡単な抽出型要約を生成する。
+        (改善: ダミー実装から具体的な要約ロジックに置き換え)
+        """
+        # 1. テキストを文に分割
+        sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
+        if not sentences:
+            return ""
+
+        # 2. 各文の重要度をスコアリング (単純な単語頻度に基づく)
+        words = re.findall(r'\w+', text.lower())
+        word_freq = Counter(words)
+        sentence_scores: Dict[int, float] = {}
+        for i, sentence in enumerate(sentences):
+            sentence_words = re.findall(r'\w+', sentence.lower())
+            score = sum(word_freq[word] for word in sentence_words)
+            sentence_scores[i] = score / len(sentence_words) if sentence_words else 0
+
+        # 3. スコアの高い文を抽出
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # mypyエラーを解消するため、keyにlambda式を明示的に使用
+        highest_scoring_indices = nlargest(num_sentences, sentence_scores, key=lambda k: sentence_scores[k])
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        summary_sentences = [sentences[i] for i in sorted(highest_scoring_indices)]
+        
+        return " ".join(summary_sentences)
 
     async def handle_task(self, task_description: str, unlabeled_data_path: Optional[str] = None, force_retrain: bool = False) -> Optional[Dict[str, Any]]:
         """

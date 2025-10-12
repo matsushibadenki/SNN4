@@ -1,15 +1,6 @@
 # ファイルパス: snn_research/cognitive_architecture/cortex.py
 # (修正)
-#
-# Title: Cortex (大脳皮質) モジュール
-#
-# Description:
-# - mypyエラーを解消するため、辞書のキーとして使用する変数がNoneでないこと、
-#   かつ文字列であることをisinstanceで明示的にチェックする処理を追加。
-# - 人工脳アーキテクチャの「記憶層」に属し、長期記憶を担うコンポーネント。
-# - Hippocampus (海馬) から送られてきた短期記憶（エピソード）を、
-#   永続的な知識として構造化し、固定する役割を持つ。
-# - 知識をナレッジグラフとして表現し、概念間の関連性を基にした検索を可能にする。
+# 修正: mypyエラー [annotation-unchecked] を解消するため、__init__に戻り値の型ヒントを追加。
 
 from typing import Dict, Any, Optional, List
 
@@ -17,13 +8,13 @@ class Cortex:
     """
     長期的な知識をナレッジグラフとして管理する大脳皮質モジュール。
     """
-    def __init__(self):
+    def __init__(self) -> None:
         # 知識を格納するためのグラフ構造 (辞書で簡易的に表現)
         # 例: {'concept_A': [{'relation': 'is_a', 'target': 'category_X'}]}
         self.knowledge_graph: Dict[str, List[Dict[str, Any]]] = {}
         print("🧠 大脳皮質（長期記憶）モジュールが初期化されました。")
 
-    def consolidate_memory(self, episode: Dict[str, Any]):
+    def consolidate_memory(self, episode: Dict[str, Any]) -> None:
         """
         短期記憶のエピソードを解釈し、長期記憶として知識グラフに統合（固定）する。
 

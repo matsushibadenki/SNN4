@@ -4,11 +4,18 @@
 # 改善点 (v4): ロードマップ「因果的記憶アクセス」を実装。
 #              経験を記録する際に、その成功に寄与したと考えられる
 #              「因果スナップショット」を保存する機能を追加。
+# 改善点 (v5): retrieve_similar_experiences のダミー実装を
+#              TF-IDFに基づくベクトル類似度検索に置き換え。
+# 修正点: mypyエラー [import-untyped] を解消するため、type: ignoreを追加。
 
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import os
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 class Memory:
     """
@@ -32,7 +39,7 @@ class Memory:
         reward: Dict[str, Any],
         expert_used: List[str],
         decision_context: Dict[str, Any],
-        causal_snapshot: Optional[str] = None  # ◾️ 追加
+        causal_snapshot: Optional[str] = None
     ):
         """
         単一の経験を記録する。
@@ -49,16 +56,14 @@ class Memory:
             "reward": reward,
             "expert_used": expert_used,
             "decision_context": decision_context,
-            "causal_snapshot": causal_snapshot,  # ◾️ 追加
+            "causal_snapshot": causal_snapshot,
         }
         with open(self.memory_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(experience_tuple, ensure_ascii=False) + "\n")
 
-    # ... (retrieve_similar_experiences, retrieve_successful_experiences, get_total_reward は変更なし) ...
-    def retrieve_similar_experiences(self, query_state, top_k=5) -> List[Dict[str, Any]]:
+    def retrieve_similar_experiences(self, query_state: Dict[str, Any], top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        現在の状態に類似した過去の経験を検索する（簡易的な実装）。
-        実際には、より高度なベクトル検索などが必要になる。
+        現在の状態に類似した過去の経験をTF-IDFベクトル検索で検索する。
         """
         experiences = []
         try:
@@ -68,8 +73,34 @@ class Memory:
         except FileNotFoundError:
             return []
         
-        # この実装はデモ用。実際には状態をベクトル化し、類似度検索を行う。
-        return experiences[-top_k:]
+        if not experiences:
+            return []
+
+        # 状態からテキスト表現を抽出 (この例では'action'と'result'を使用)
+        def get_text_from_exp(exp: Dict[str, Any]) -> str:
+            action = exp.get("action", "")
+            result = exp.get("result", {})
+            result_str = str(result.get("details", "") or result.get("info", ""))
+            return f"{action} {result_str}"
+
+        corpus = [get_text_from_exp(exp) for exp in experiences]
+        query_text = get_text_from_exp({"action": query_state.get("last_action"), "result": query_state.get("last_result")})
+        
+        try:
+            vectorizer = TfidfVectorizer().fit(corpus)
+            corpus_vectors = vectorizer.transform(corpus)
+            query_vector = vectorizer.transform([query_text])
+            
+            similarities = cosine_similarity(query_vector, corpus_vectors).flatten()
+            
+            # 類似度が高い順にインデックスを取得
+            top_indices = similarities.argsort()[-top_k:][::-1]
+            
+            return [experiences[i] for i in top_indices]
+        except ValueError:
+            # コーパスが空の場合など
+            return experiences[-top_k:]
+
 
     def retrieve_successful_experiences(self, top_k: int = 5) -> List[Dict[str, Any]]:
         """
