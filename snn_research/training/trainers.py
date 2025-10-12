@@ -1,5 +1,5 @@
 # ファイルパス: snn_research/training/trainers.py
-# (修正)
+# (更新)
 # 修正点: mypyエラー [call-arg] を解消するため、DistillationTrainer内の
 #         未使用かつ型推論を混乱させていた train メソッドを削除。
 # 修正点(v2): PyTorchのUserWarningを解消するため、train_epochメソッド内の
