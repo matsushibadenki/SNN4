@@ -1,5 +1,4 @@
 # ファイルパス: snn_research/cognitive_architecture/emergent_system.py
-# (更新)
 #
 # Title: 創発システム
 #
@@ -31,16 +30,16 @@
 # - mypyエラー `Item "None" of "dict[str, Any] | None" has no attribute "get"` を修正。
 #   `execution_result` がNoneでないことを明示的にチェックする処理を追加。
 #
-# 改善点 (v5): スパイクベースの通信による協調タスク実行シナリオを追加。
+# 改善点 (v5): スパイクベースの通信タスクを実装。
 
 import asyncio
 from typing import List, Dict, Any, TYPE_CHECKING, Optional, Tuple
 import random
+import torch
 
 from .global_workspace import GlobalWorkspace
 from .hierarchical_planner import HierarchicalPlanner
 from snn_research.distillation.model_registry import ModelRegistry
-from snn_research.communication.spike_encoder_decoder import SpikeEncoderDecoder
 
 # --- 循環インポート解消のための修正 ---
 if TYPE_CHECKING:
@@ -58,41 +57,35 @@ class EmergentCognitiveSystem:
         self.agents = {agent.name: agent for agent in agents}
         self.global_workspace = global_workspace
         self.model_registry = model_registry
-        self.spike_communicator = SpikeEncoderDecoder()
 
     async def run_cooperative_observation_task(self):
         """
-        エージェント間のスパイクベース通信をシミュレートする協調タスク。
+        エージェント間のスパイクベース通信をデモンストレーションする協調タスク。
         """
-        print("\n--- 🤝 Cooperative Observation Task Start ---")
-        if len(self.agents) < 2:
-            print("  - Not enough agents for cooperative task. Need at least 2.")
+        print("\n" + "="*20 + " 📡 Cooperative Observation Task " + "="*20)
+        
+        observer_agent = self.agents.get("AutonomousAgent")
+        recipient_agent = self.agents.get("SpecialistAgent")
+
+        if not observer_agent or not recipient_agent:
+            print("❌ Task failed: Required agents ('AutonomousAgent', 'SpecialistAgent') not found.")
             return
 
-        # 役割を割り当て
-        sender_name, receiver_name = random.sample(list(self.agents.keys()), 2)
-        sender = self.agents[sender_name]
-        receiver = self.agents[receiver_name]
+        # 1. 観測者エージェントが情報を発見し、スパイクにエンコード
+        observation = {"intent": "share_finding", "payload": "Found a new pattern of high activity in sector 7."}
+        print(f"👀 Observer '{observer_agent.name}' makes an observation: {observation}")
+        spike_message = observer_agent.spike_communicator.encode_data(observation)
+        
+        # 2. 観測者がGlobalWorkspaceに情報をブロードキャスト
+        print(f"📢 Observer '{observer_agent.name}' broadcasts the finding to the Global Workspace.")
+        self.global_workspace.broadcast(source=observer_agent.name, data=observation) # ブロードキャストはデコードされたデータで
+        
+        # 3. 受信者エージェントがスパイクメッセージを直接受信して処理
+        #    (実際のシステムでは、GlobalWorkspace経由やP2Pで渡される)
+        recipient_agent.receive_and_process_spike_message(spike_message, source_agent=observer_agent.name)
+        
+        print("="*68)
 
-        print(f"  - Observer: {sender.name}, Receiver: {receiver.name}")
-
-        # 1. 観測者が情報を発見
-        observation = {"intent": "inform_observation", "payload": {"object": "red ball", "location": "field"}}
-        print(f"  - {sender.name} observed: {observation['payload']}")
-
-        # 2. 観測者が情報をスパイクにエンコードしてブロードキャスト
-        spike_message = self.spike_communicator.encode_message(observation['intent'], observation['payload'])
-        self.global_workspace.broadcast(sender.name, {"spike_message": spike_message}) # GlobalWorkspaceは内部でさらにエンコードするが、ここではデモとしてラップ
-        print(f"  - {sender.name} is broadcasting the observation as a spike pattern...")
-
-        # 3. 受信者がスパイクメッセージを受信して処理
-        broadcasted_info = self.global_workspace.get_information(sender.name)
-        if broadcasted_info and "spike_message" in broadcasted_info:
-            receiver.receive_and_process_spike_message(broadcasted_info["spike_message"], source_agent=sender.name)
-        else:
-            print("  - Error: Could not retrieve spike message from Global Workspace.")
-
-        print("--- ✅ Cooperative Observation Task Finished ---\n")
 
     def execute_task(self, high_level_goal: str) -> str:
         """
@@ -105,7 +98,6 @@ class EmergentCognitiveSystem:
         task_desc = failed_task.get("description", "")
         alternative_experts = await self.model_registry.find_models_for_task(str(task_desc), top_k=5)
 
-        # 現在の専門家モデルの性能を取得
         original_expert_id = failed_task.get("expert_id")
         original_expert_info = await self.model_registry.get_model_info(original_expert_id) if original_expert_id else None
         original_performance = original_expert_info.get("metrics", {}).get("accuracy", 0.0) if original_expert_info else 0.0
@@ -114,12 +106,10 @@ class EmergentCognitiveSystem:
         best_new_task: Optional[Dict[str, Any]] = None
         best_performance = original_performance
 
-        # 他のエージェントが持つ、より優れた専門家を探す
         for agent_name, agent in self.agents.items():
             if agent.name == failed_agent.name:
-                continue # 自分自身は除外
+                continue
 
-            # このエージェントが利用可能な専門家モデルの中から探す（ここでは簡略化のため全レジストリを検索）
             for expert in alternative_experts:
                 expert_performance = expert.get("metrics", {}).get("accuracy", 0.0)
                 if expert.get("model_id") != original_expert_id and expert_performance > best_performance:
@@ -142,27 +132,21 @@ class EmergentCognitiveSystem:
         """非同期でタスク実行サイクルを処理する。協調的再計画ロジックを含む。"""
         print(f"--- Emergent System: Executing Goal: {high_level_goal} ---")
 
-        # 1. 初期計画の作成
         plan = await self.planner.create_plan(high_level_goal)
         self.global_workspace.broadcast("plan", f"New plan created: {plan.task_list}")
 
-        # 2. 計画の実行
         results = []
         task_queue = plan.task_list.copy()
         
-        # どのエージェントにタスクを割り当てるかのキュー（名前）
         agent_assignment_queue: List[Optional[str]] = [None] * len(task_queue)
-
 
         while task_queue:
             task = task_queue.pop(0)
             assigned_agent_name = agent_assignment_queue.pop(0)
             
-            # 優先的に割り当てられたエージェントがいるか確認
             if assigned_agent_name and assigned_agent_name in self.agents:
                 agent = self.agents[assigned_agent_name]
             else:
-                # デフォルトのエージェント選択ロジック
                 agent = random.choice(list(self.agents.values()))
 
             if not agent:
@@ -173,11 +157,8 @@ class EmergentCognitiveSystem:
             task_description = task.get("description", "")
             print(f"-> Assigning task '{task_description}' to agent '{agent.name}'")
             
-            # 実際のタスク実行を試みる
-            # 成功すればモデル情報が、失敗すればNoneが返る
             execution_result = await agent.handle_task(
                 task_description=task_description,
-                # 協力時に学習データがない場合もあるため、ここではNoneを渡す
                 unlabeled_data_path=None, 
                 force_retrain=False
             )
@@ -185,14 +166,11 @@ class EmergentCognitiveSystem:
             is_success = execution_result is not None
             
             if is_success:
-                # Mypyエラー修正: is_successチェック後でもexecution_resultがNoneの可能性があると判断されるため、
-                # 明示的なチェックを追加してエラーを回避する。
                 expert_id = execution_result.get('model_id', 'unknown') if execution_result else 'unknown'
                 result = f"SUCCESS: Task '{task_description}' completed by '{agent.name}' using expert '{expert_id}'."
                 results.append(result)
                 self.global_workspace.broadcast(agent.name, result)
             else:
-                # --- 協調行動: タスク失敗と協力者の探索 ---
                 result = f"FAILURE: Task '{task_description}' failed by '{agent.name}' (no suitable expert found)."
                 results.append(result)
                 self.global_workspace.broadcast(agent.name, result)
@@ -203,12 +181,11 @@ class EmergentCognitiveSystem:
                 if collaboration_proposal:
                     collaborator_name, new_task = collaboration_proposal
                     print(f"++ Collaboration proposed! Re-assigning task to agent '{collaborator_name}'.")
-                    task_queue.insert(0, new_task) # 新しいタスクをキューの先頭に追加
-                    agent_assignment_queue.insert(0, collaborator_name) # 次の実行者を指定
+                    task_queue.insert(0, new_task)
+                    agent_assignment_queue.insert(0, collaborator_name)
                 else:
                     print("-- No collaborator found. Aborting this task branch.")
 
-        # 3. 統合と要約
         final_report = self._synthesize_results(results)
         self.global_workspace.broadcast("system", f"Goal '{high_level_goal}' completed. Final report generated.")
         print(f"--- Emergent System: Goal Execution Finished ---")
@@ -222,3 +199,4 @@ class EmergentCognitiveSystem:
         for i, res in enumerate(results):
             report += f"- Step {i+1}: {res}\n"
         return report
+
