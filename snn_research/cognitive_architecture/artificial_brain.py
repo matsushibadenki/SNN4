@@ -4,6 +4,7 @@
 #          呼び出すように修正。
 # 改善点(v2): ROADMAPフェーズ2に基づき、Amygdalaからの情動出力を
 #            BasalGangliaの行動選択に伝達するよう修正。
+# 修正点(v3): mypyが検出したファイル末尾の不要な括弧を削除。
 
 from typing import Dict, Any, List
 import asyncio
@@ -95,10 +96,8 @@ class ArtificialBrain:
         plan = asyncio.run(self.planner.create_plan(goal))
         action_candidates = self._convert_plan_to_candidates(plan)
         
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         # 行動選択の際に、現在の情動状態を伝達する
         selected_action = self.basal_ganglia.select_action(action_candidates, emotion_context=emotion)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
         if selected_action:
             motor_commands = self.cerebellum.refine_action_plan(selected_action)
@@ -117,5 +116,3 @@ class ArtificialBrain:
                 'duration': 1.0 
             })
         return candidates
-
-}
