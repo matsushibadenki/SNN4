@@ -10,6 +10,10 @@
 # 実装更新 (v10):
 # - _execute_actionメソッドの強化学習関連のダミー実装を、
 #   実際にBioRLTrainerを呼び出して短期間の学習サイクルを実行する具体的なロジックに置き換え。
+#
+# 修正点 (v11):
+# - pytestで発生した循環インポートエラーを解消するため、BioRLTrainerとGridWorldEnvの
+#   トップレベルインポートを削除し、メソッド内での局所インポートに修正。
 
 import time
 import logging
@@ -29,13 +33,16 @@ from snn_research.agent.reinforcement_learner_agent import ReinforcementLearnerA
 from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
 from snn_research.cognitive_architecture.hierarchical_planner import HierarchicalPlanner
 from snn_research.distillation.model_registry import DistributedModelRegistry
-from snn_research.rl_env.grid_world import GridWorldEnv
-from snn_research.training.bio_trainer import BioRLTrainer
 
+# --- 循環インポート解消のための修正 ---
+# from snn_research.rl_env.grid_world import GridWorldEnv
+# from snn_research.training.bio_trainer import BioRLTrainer
 
 # 型チェック時のみインポートを実行する
 if TYPE_CHECKING:
     from app.adapters.snn_langchain_adapter import SNNLangChainAdapter
+    from snn_research.training.bio_trainer import BioRLTrainer
+    from snn_research.rl_env.grid_world import GridWorldEnv
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -54,7 +61,6 @@ class DigitalLifeForm:
         memory: Memory,
         physics_evaluator: PhysicsEvaluator,
         symbol_grounding: SymbolGrounding,
-        # Forward Reference (文字列) を使って型ヒントを記述
         langchain_adapter: "SNNLangChainAdapter"
     ):
         self.autonomous_agent = autonomous_agent
@@ -100,7 +106,6 @@ class DigitalLifeForm:
         if isinstance(result, dict):
             self.symbol_grounding.process_observation(result, context=f"action '{action}'")
         
-        # 報酬ベクトルに好奇心を追加
         reward_vector = {
             "external": external_reward,
             "physical": physical_rewards,
@@ -185,6 +190,11 @@ class DigitalLifeForm:
         """
         選択された行動に対応するエージェントの機能を実際に呼び出す。
         """
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # 循環インポートを避けるため、メソッド内で局所的にインポート
+        from snn_research.rl_env.grid_world import GridWorldEnv
+        from snn_research.training.bio_trainer import BioRLTrainer
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         try:
             if action == "publish_successful_skill":
                 if isinstance(self.autonomous_agent.model_registry, DistributedModelRegistry):
@@ -212,24 +222,19 @@ class DigitalLifeForm:
                 result_str = self.self_evolving_agent.evolve()
                 return {"status": "success", "info": result_str}, 0.9, ["self_evolver"]
                 
-            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
             elif action == "explore_new_task_with_rl" or action == "practice_skill_with_rl":
                 self.state["last_task"] = "rl_training"
                 logging.info(f"Initiating RL session: {action}")
                 
-                # 環境とトレーナーを初期化
                 env = GridWorldEnv(size=5, max_steps=20, device=self.rl_agent.device)
                 trainer = BioRLTrainer(agent=self.rl_agent, env=env)
                 
-                # 短い学習セッションを実行
                 num_episodes = 20 if action == "explore_new_task_with_rl" else 10
                 training_results = trainer.train(num_episodes=num_episodes)
                 
-                # 報酬は学習結果の平均報酬とする
                 reward = training_results.get("final_average_reward", 0.0)
                 
                 return {"status": "success", "info": f"RL session '{action}' finished.", "results": training_results}, reward, ["rl_agent"]
-            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
                 
             elif action == "plan_and_execute":
                 task = "Research the concept of 'Predictive Coding' and summarize its main ideas."
