@@ -7,6 +7,10 @@
 # 改善点:
 # - ROADMAPフェーズ4「ハードウェア展開」に基づき、ハードウェアプロファイルを導入。
 # - evaluateメソッドを更新し、スパイク数から推定エネルギー消費量を計算するようにした。
+#
+# 修正点(v2):
+# - RuntimeErrorを解消するため、SNNClassifierが使用するBreakthroughSNNの
+#   d_stateパラメータを調整し、次元の不整合を修正。
 
 import os
 import json
@@ -96,14 +100,21 @@ class SST2Task(BenchmarkTask):
             def __init__(self, snn_backbone):
                 super().__init__()
                 self.snn_backbone = snn_backbone
-                self.classifier = nn.Linear(self.snn_backbone.d_model, 2)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+                # BreakthroughSNNの隠れ層の次元に合わせて分類器を定義
+                if isinstance(snn_backbone, BreakthroughSNN):
+                    in_features = snn_backbone.d_state * snn_backbone.num_layers
+                else:
+                    in_features = snn_backbone.d_model
+                self.classifier = nn.Linear(in_features, 2)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
             
             def forward(self, input_ids, **kwargs):
                 # SNNの出力から最後のタイムステップの特徴量を取得して分類
                 hidden_states, spikes, mem = self.snn_backbone(
                     input_ids,
                     return_spikes=True,
-                    output_hidden_states=True
+                    output_hidden_states=True # このフラグで隠れ状態を取得
                 )
                 pooled_output = hidden_states[:, -1, :] # 最後のトークンの特徴量を使用
                 logits = self.classifier(pooled_output)
@@ -114,7 +125,10 @@ class SST2Task(BenchmarkTask):
             backbone = BreakthroughSNN(
                 vocab_size=vocab_size,
                 d_model=64, 
-                d_state=32,
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+                # d_state * num_layers が d_model と一致するように調整
+                d_state=16,
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
                 num_layers=4,
                 time_steps=64,
                 n_head=2,
