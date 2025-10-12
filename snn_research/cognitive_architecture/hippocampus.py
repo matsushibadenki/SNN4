@@ -1,5 +1,5 @@
 # ファイルパス: snn_research/cognitive_architecture/hippocampus.py
-# (新規作成)
+# (更新)
 #
 # Title: Hippocampus (海馬) モジュール
 #
@@ -9,6 +9,9 @@
 # - 保持できる情報量には限りがあり、古い記憶は忘却される（FIFO）。
 # - 将来的には、長期記憶への転送（記憶の固定）や、
 #   注意機構と連携した情報の重み付けなどの機能拡張を想定。
+#
+# 改善点(v2):
+# - ROADMAPフェーズ3に基づき、長期記憶への固定化プロセスを明確にするためのメソッドを追加。
 
 from typing import List, Dict, Any
 from collections import deque
@@ -58,6 +61,15 @@ class Hippocampus:
         recent_episodes = [self.working_memory[-i] for i in range(1, num_to_retrieve + 1)]
 
         return recent_episodes
+    
+    def get_and_clear_episodes_for_consolidation(self) -> List[Dict[str, Any]]:
+        """
+        長期記憶への固定化のために、現在の全エピソードを返し、メモリをクリアする。
+        """
+        episodes_to_consolidate = list(self.working_memory)
+        self.clear_memory()
+        print(f"📤 海馬: 長期記憶への固定化のため、{len(episodes_to_consolidate)}件のエピソードを転送しました。")
+        return episodes_to_consolidate
 
     def clear_memory(self):
         """
