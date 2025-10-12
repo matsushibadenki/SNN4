@@ -325,4 +325,3 @@ class AutonomousAgent:
         except Exception as e:
             print(f"\n❌ Inference failed: {e}")
             self.memory.record_experience(self.current_state, "inference", {"error": str(e)}, {"external": -0.5}, [model_id] if model_id != 'N/A' else [], {})
-
