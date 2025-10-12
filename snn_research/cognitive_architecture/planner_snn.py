@@ -5,6 +5,10 @@
 # - 自然言語のタスク要求を入力として受け取る。
 # - 利用可能な専門家スキル（サブタスク）の最適な実行順序を予測して出力する。
 # - BreakthroughSNNをベースアーキテクチャとして使用する。
+#
+# 修正点(v2):
+# - mypyエラー[override]を解消するため、forwardメソッドのシグネチャを
+#   親クラスと一致するように修正。
 
 import torch
 import torch.nn as nn
@@ -30,17 +34,19 @@ class PlannerSNN(BreakthroughSNN):
     def forward(
         self, 
         input_ids: torch.Tensor, 
-        return_spikes: bool = False, 
+        return_spikes: bool = False,
+        output_hidden_states: bool = False, # 親クラスとの互換性のために追加
         **kwargs: Any
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         フォワードパスを実行し、スキル予測ロジット、スパイク、膜電位を返す。
         """
-        # super().forward()を呼び出すと、このクラスで上書きされたself.output_projectionが内部で使われる。
-        # その結果、skill_logits_over_timeは [batch, seq_len, num_skills] の形状を持つ。
+        # PlannerSNNは常にスキルロジットを返すことを意図しているため、
+        # super().forward()には output_hidden_states=False を渡してロジットを取得する。
         skill_logits_over_time, spikes, mem = super().forward(
             input_ids, 
             return_spikes=return_spikes, 
+            output_hidden_states=False, # 常にロジットを取得するように指定
             **kwargs
         )
         
