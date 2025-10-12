@@ -1,4 +1,4 @@
-# **プロジェクト機能テスト コマンド一覧 (v4.0)**
+# **プロジェクト機能テスト コマンド一覧 (v5.0)**
 
 ## **1\. 概要**
 
@@ -55,7 +55,7 @@ python scripts/data\_preparation.py
 
 #### **B-3. オンデマンド学習（知識蒸留）**
 
-自律エージェントに未知のタスクを与え、Webから収集した情報や既存のデータを用いて、タスク特化型の「専門家モデル」を自動的に生成（知識蒸留）させます。
+自律エージェントに未知のタスクを与え、既存のデータを用いて、タスク特化型の「専門家モデル」を自動的に生成（知識蒸留）させます。
 
 \# 使用例: wikitext-103を使って「汎用言語モデル」を育成  
 snn-cli.py agent solve \--task "汎用言語モデル" \--force-retrain
@@ -79,6 +79,16 @@ python scripts/convert\_model.py \--method convert \--ann\_model\_path dummy\_an
 \# 知識蒸留を行う手法  
 python scripts/convert\_model.py \--method distill \--ann\_model\_path dummy\_ann.safetensors \--output\_snn\_path runs/distilled\_model.pth
 
+#### **B-6. Webからの自律学習**
+
+指定したトピックについてWebをクロールし、収集した情報からタスク特化型の専門家モデルを自律的に生成します。
+
+\# 使用例: 「最新のAI技術」について学習する  
+python run\_web\_learning.py \\  
+    \--topic "最新のAI技術" \\  
+    \--start\_url "\[https://www.itmedia.co.jp/news/subtop/aiplus/\](https://www.itmedia.co.jp/news/subtop/aiplus/)" \\  
+    \--max\_pages 5
+
 ### **C) 高度な認知・自律機能**
 
 **目的:** 学習済みのモデルや認知コンポーネントを連携させ、高度なタスクを実行します。
@@ -96,7 +106,7 @@ snn-cli.py agent solve \--task "汎用言語モデル" \--prompt "SNNとは何�
 
 snn-cli.py planner execute \\  
     \--request "この記事を要約して、その内容の感情を分析してください。" \\  
-    \--context\_data "SNNは非常にエネルギー効率が高いことで知られている。"
+    \--context\_data "SNNは非常にエネルギー効率が高いことで知られているが、その性能はまだANNに及ばない点もある。"
 
 #### **C-3. 人工脳シミュレーション**
 
@@ -128,8 +138,8 @@ snn-cli.py evolve run \\
 
 #### **C-6. 強化学習**
 
-生物学的学習則（報酬変調型STDP）を用いるエージェントが、GridWorld環境内で試行錯誤を通じてタスクを学習するプロセスを開始します。
-
+生物学的学習則（報酬変調型STDP）を用いるエージェントが、GridWorld環境内で試行錯誤を通じてタスクを学習するプロセスを開始します。  
+（注：このコマンドは内部で run\_rl\_agent.py を呼び出します。実行後、結果ディレクトリに学習曲線グラフとモデルファイルが保存されます。）  
 snn-cli.py rl run \--episodes 1000
 
 #### **C-7. マルチエージェントによる協調的タスク解決**
