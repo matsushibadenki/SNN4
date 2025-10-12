@@ -66,17 +66,12 @@ from snn_research.cognitive_architecture.hybrid_perception_cortex import HybridP
 
 # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 from snn_research.benchmark.tasks import TASK_REGISTRY
+from .utils import get_auto_device
 # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 if TYPE_CHECKING:
     from .adapters.snn_langchain_adapter import SNNLangChainAdapter
 
-
-def get_auto_device() -> str:
-    """実行環境に最適なデバイスを自動的に選択する。"""
-    if torch.cuda.is_available(): return "cuda"
-    if torch.backends.mps.is_available(): return "mps"
-    return "cpu"
 
 def _calculate_t_max(epochs: int, warmup_epochs: int) -> int:
     """学習率スケジューラのT_maxを計算する"""
