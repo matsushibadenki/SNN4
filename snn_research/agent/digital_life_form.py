@@ -7,9 +7,9 @@
 # - 循環インポートエラーを解消するため、SNNLangChainAdapterのトップレベルインポートを削除し、
 #   TYPE_CHECKINGとForward Reference（文字列による型指定）を使用するように修正。
 #
-# 実装更新:
-# - _execute_actionメソッドのダミー実装を、実際のエージェント機能（Web学習、自己進化など）を
-#   呼び出す具体的なロジックに置き換えました。
+# 実装更新 (v10):
+# - _execute_actionメソッドの強化学習関連のダミー実装を、
+#   実際にBioRLTrainerを呼び出して短期間の学習サイクルを実行する具体的なロジックに置き換え。
 
 import time
 import logging
@@ -29,9 +29,9 @@ from snn_research.agent.reinforcement_learner_agent import ReinforcementLearnerA
 from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
 from snn_research.cognitive_architecture.hierarchical_planner import HierarchicalPlanner
 from snn_research.distillation.model_registry import DistributedModelRegistry
+from snn_research.rl_env.grid_world import GridWorldEnv
+from snn_research.training.bio_trainer import BioRLTrainer
 
-# 循環インポートを避けるため、トップレベルでのインポートを削除
-# from app.adapters.snn_langchain_adapter import SNNLangChainAdapter
 
 # 型チェック時のみインポートを実行する
 if TYPE_CHECKING:
@@ -197,7 +197,6 @@ class DigitalLifeForm:
 
             elif action == "download_skill_from_community":
                 if isinstance(self.autonomous_agent.model_registry, DistributedModelRegistry):
-                    # 知識ギャップの原因となったタスクを特定（ここでは最後のタスクを使用）
                     task_needed = self.state.get("last_task", "text_summarization")
                     downloaded_skill = asyncio.run(self.autonomous_agent.model_registry.download_skill(task_needed, "runs/downloaded_skills"))
                     return {"status": "success" if downloaded_skill else "failure", "info": f"Downloaded skill for {task_needed}"}, 1.0, ["model_registry"]
@@ -205,37 +204,36 @@ class DigitalLifeForm:
 
             elif action == "acquire_new_knowledge":
                 self.state["last_task"] = "web_research"
-                # 自律エージェントのWeb学習機能を呼び出す
                 result_str = self.autonomous_agent.learn_from_web("latest trends in neuromorphic computing")
                 return {"status": "success", "info": result_str}, 0.8, ["web_crawler", "summarizer"]
                 
             elif action == "evolve_architecture":
                 self.state["last_task"] = "self_evolution"
-                # 自己進化エージェントの進化機能を呼び出す
                 result_str = self.self_evolving_agent.evolve()
                 return {"status": "success", "info": result_str}, 0.9, ["self_evolver"]
                 
-            elif action == "explore_new_task_with_rl":
-                self.state["last_task"] = "rl_exploration"
-                # 強化学習エージェントで簡単な学習を実行（ダミー）
-                # 実際の環境では、ここで新しいタスクの学習が開始される
-                state = self.rl_agent.encoder.encode_text_to_spikes("new task").mean(dim=1)
-                action_idx = self.rl_agent.get_action(state)
-                self.rl_agent.learn(reward=0.7) # 新しいタスクを発見したことに対する正の報酬
-                return {"status": "success", "info": f"Explored new RL task, took action {action_idx}"}, 0.7, ["rl_agent"]
+            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+            elif action == "explore_new_task_with_rl" or action == "practice_skill_with_rl":
+                self.state["last_task"] = "rl_training"
+                logging.info(f"Initiating RL session: {action}")
                 
-            elif action == "practice_skill_with_rl":
-                self.state["last_task"] = "rl_practice"
-                # 既存のスキルを強化学習で練習（ダミー）
-                state = self.rl_agent.encoder.encode_text_to_spikes("practice").mean(dim=1)
-                action_idx = self.rl_agent.get_action(state)
-                self.rl_agent.learn(reward=0.5) # 練習したことに対する報酬
-                return {"status": "success", "info": f"Practiced RL skill, took action {action_idx}"}, 0.5, ["rl_agent"]
+                # 環境とトレーナーを初期化
+                env = GridWorldEnv(size=5, max_steps=20, device=self.rl_agent.device)
+                trainer = BioRLTrainer(agent=self.rl_agent, env=env)
+                
+                # 短い学習セッションを実行
+                num_episodes = 20 if action == "explore_new_task_with_rl" else 10
+                training_results = trainer.train(num_episodes=num_episodes)
+                
+                # 報酬は学習結果の平均報酬とする
+                reward = training_results.get("final_average_reward", 0.0)
+                
+                return {"status": "success", "info": f"RL session '{action}' finished.", "results": training_results}, reward, ["rl_agent"]
+            # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
                 
             elif action == "plan_and_execute":
                 task = "Research the concept of 'Predictive Coding' and summarize its main ideas."
                 self.state["last_task"] = "planning"
-                # 自律エージェントのプラン実行機能を呼び出す
                 result_str = self.autonomous_agent.execute(task)
                 return {"status": "success", "info": result_str}, 0.8, ["planner", "web_crawler", "summarizer_snn"]
                 
