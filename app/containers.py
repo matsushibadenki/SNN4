@@ -329,6 +329,7 @@ class AgentContainer(containers.DeclarativeContainer):
 
     memory = providers.Factory(
         Memory,
+        rag_system=rag_system, # RAGSystemを注入
         memory_path=providers.Callable(
             lambda log_dir: os.path.join(log_dir, "agent_memory.jsonl") if log_dir else "runs/agent_memory.jsonl",
             log_dir=config.training.log_dir
