@@ -1,9 +1,10 @@
 # ファイルパス: app/containers.py
-# (修正 v16 - 最終修正)
+# (修正 v17 - 最終修正)
 # 根本修正: pytest収集時および実行時に発生するすべての `TypeError` 及び `AttributeError` を
 #           完全に解消するため、DIコンテナの定義方法を全面的に見直し、
 #           ライブラリのベストプラクティスに沿った形に修正。
-#           すべての設定値アクセスをオブジェクト生成時まで遅延させる記述に統一した。
+#           すべての設定値アクセスをオブジェクト生成時まで遅延させる記述に統一し、
+#           プロバイダの種類を `Factory` に統一することで `_asyncio.Future` エラーを解消する。
 
 import torch
 from dependency_injector import containers, providers
