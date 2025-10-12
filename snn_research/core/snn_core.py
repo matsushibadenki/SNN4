@@ -146,7 +146,7 @@ class BreakthroughSNN(BaseModel):
         token_emb = self.token_embedding(input_ids)
         embedded_sequence = self.input_encoder(token_emb)
         inference_neuron = cast(AdaptiveLIFNeuron, self.pc_layers[0].inference_neuron)
-        states = [torch.zeros(batch_size, inference_neuron.features, device=device) for _ in range(self.num_layers)]
+        states = [torch.zeros(batch_size, self.d_state, device=device) for _ in range(self.num_layers)]
         all_timestep_outputs = []
         for _ in range(self.time_steps):
             sequence_outputs = []
@@ -160,13 +160,11 @@ class BreakthroughSNN(BaseModel):
         
         final_hidden_states = all_timestep_outputs[-1]
         
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if output_hidden_states:
              # 分類タスクなど、最終層の前の特徴量が必要な場合に備える
              output = final_hidden_states
         else:
              output = self.output_projection(final_hidden_states)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
@@ -209,12 +207,10 @@ class SpikingTransformer(BaseModel):
 
         x_normalized = self.final_norm(x)
         
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if output_hidden_states:
             output = x_normalized
         else:
             output = self.output_projection(x_normalized)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
