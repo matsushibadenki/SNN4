@@ -1,4 +1,4 @@
-# matsushibadenki/snn4/snn-cli.py
+# matsushibadenki/snn4/snn4-79496245059a9838ecdcdf953e28024581f28ba2/snn-cli.py
 # Title: 統合CLIツール
 # Description:
 # - プロジェクトの全機能を一元的に管理・実行するためのコマンドラインインターフェース。
@@ -16,7 +16,7 @@
 # - SyntaxErrorを解消するため、ファイル末尾に誤って混入していたPythonコード以外の説明文を削除。
 #
 # 改善点 (v16):
-# - スパイクベースの通信機能をテストするための `emergent-system communicate` コマンドを追加。
+# - スパイクベースの通信タスクを実行するための `emergent-system communicate` コマンドを追加。
 
 import sys
 from pathlib import Path
@@ -75,7 +75,6 @@ def agent_solve(
     min_accuracy: float = typer.Option(0.6, help="専門家モデルを選択するための最低精度要件"),
     max_spikes: float = typer.Option(10000.0, help="専門家モデルを選択するための平均スパイク数上限")
 ):
-    # 必要なモジュールを関数内でインポート
     from app.containers import AgentContainer
     from snn_research.agent.autonomous_agent import AutonomousAgent
     
@@ -126,7 +125,6 @@ def planner_execute(
 
 def get_life_form_instance(model_config_path: str):
     """DigitalLifeFormのインスタンスを、依存関係を注入して生成する。"""
-    # 必要なモジュールを関数内でインポート
     from app.containers import AgentContainer, AppContainer
     from snn_research.agent.digital_life_form import DigitalLifeForm
     from snn_research.agent.autonomous_agent import AutonomousAgent
@@ -139,11 +137,11 @@ def get_life_form_instance(model_config_path: str):
 
     agent_container = AgentContainer()
     agent_container.config.from_yaml("configs/base_config.yaml")
-    agent_container.config.from_yaml(model_config_path) # モデル設定を読み込む
+    agent_container.config.from_yaml(model_config_path)
 
     app_container = AppContainer()
     app_container.config.from_yaml("configs/base_config.yaml")
-    app_container.config.from_yaml(model_config_path) # モデル設定を読み込む
+    app_container.config.from_yaml(model_config_path)
 
     planner = agent_container.hierarchical_planner()
     model_registry = agent_container.model_registry()
@@ -344,36 +342,36 @@ def emergent_execute(
     print("="*60)
 
 # --- ◾️◾️◾️◾️◾️↓コマンド追加↓◾️◾️◾️◾️◾️ ---
-@emergent_app.command("communicate", help="2体のエージェントによるスパイクベースの通信タスクを実行します。")
+@emergent_app.command("communicate", help="エージェント間のスパイクベース通信タスクを実行します。")
 def emergent_communicate():
-    """スパイクベースの通信をテストするためのラッパー"""
+    """スパイク通信の協調タスクを実行する。"""
     from app.containers import AgentContainer
     from snn_research.agent.autonomous_agent import AutonomousAgent
     from snn_research.cognitive_architecture.emergent_system import EmergentCognitiveSystem
     from snn_research.cognitive_architecture.global_workspace import GlobalWorkspace
-    
+
     container = AgentContainer()
     container.config.from_yaml("configs/base_config.yaml")
-
+    
     planner = container.hierarchical_planner()
     model_registry = container.model_registry()
     memory = container.memory()
     web_crawler = container.web_crawler()
-    
     global_workspace = GlobalWorkspace(model_registry=model_registry)
 
-    agent1 = AutonomousAgent(name="ObserverAgent", planner=planner, model_registry=model_registry, memory=memory, web_crawler=web_crawler)
-    agent2 = AutonomousAgent(name="ReceiverAgent", planner=planner, model_registry=model_registry, memory=memory, web_crawler=web_crawler)
-
+    agent1 = AutonomousAgent(name="AutonomousAgent", planner=planner, model_registry=model_registry, memory=memory, web_crawler=web_crawler)
+    agent2 = AutonomousAgent(name="SpecialistAgent", planner=planner, model_registry=model_registry, memory=memory, web_crawler=web_crawler)
+    
     emergent_system = EmergentCognitiveSystem(
         planner=planner,
         agents=[agent1, agent2],
         global_workspace=global_workspace,
         model_registry=model_registry
     )
-
+    
     asyncio.run(emergent_system.run_cooperative_observation_task())
 # --- ◾️◾️◾️◾️◾️↑コマンド追加↑◾️◾️◾️◾️◾️ ---
+
 
 @brain_app.command("run", help="単一の入力で人工脳の認知サイクルを1回実行します。")
 def brain_run(
@@ -481,3 +479,4 @@ def gradient_train(ctx: typer.Context):
 
 if __name__ == "__main__":
     app()
+
