@@ -273,23 +273,18 @@ class SimpleSNN(BaseModel):
 class SNNCore(nn.Module):
     def __init__(self, config: DictConfig, vocab_size: int):
         super(SNNCore, self).__init__()
-        if isinstance(config, dict):
-            config = OmegaConf.create(config)
-        self.config = config
-        model_type = self.config.get("architecture_type", "simple")
-        self.model: nn.Module
-        params: Dict[str, Any] = cast(Dict[str, Any], OmegaConf.to_container(self.config, resolve=True))
-        params.pop('path', None)
+        # ... (既存のコード) ...
         neuron_config = params.pop('neuron', {})
 
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         model_map = {
             "predictive_coding": BreakthroughSNN,
             "spiking_transformer": SpikingTransformer,
             "spiking_mamba": SpikingMamba, # MAMBAを追加
+            # ▼▼▼ ここに挿入 ▼▼▼
+            "spiking_hrm": SpikingHRM, # HRMを追加
+            # ▲▲▲ ここまで ▲▲▲
             "simple": SimpleSNN
         }
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
         self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
