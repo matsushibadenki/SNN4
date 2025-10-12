@@ -1,177 +1,178 @@
-# **プロジェクト機能テスト コマンド一覧 (v3.0)**
+# **プロジェクト機能テスト コマンド一覧 (v4.0)**
 
-このドキュメントは、プロジェクトの各機能をテストするための主要なコマンドをまとめたものです。コマンドは、専用の実行スクリプトまたは統合CLIツール snn-cli.py を通じて実行します。
+## **1\. 概要**
 
-## **A) システム健全性チェック**
+このドキュメントは、プロジェクトの全機能をテスト・実行するためのコマンドを体系的にまとめたものです。ほとんどの機能は、統合CLIツール snn-cli.py を通じて実行されます。
 
-**目的:** プロジェクトの基本的な健全性を迅速に確認するためのテスト。
+## **2\. 推奨テストフロー**
 
-### **0\. クイックテスト・簡易テストの実行**
+プロジェクトを初めて触る方や、変更後に全体的な動作確認を行いたい場合は、以下の順序でコマンドを実行することを推奨します。
 
-全ての簡易テスト。
+1. **システム全体の健全性チェック (pytest)**  
+   * すべての単体・統合テストを実行し、基本的な動作に問題がないことを確認します。  
+2. **オンデマンド学習のクイックスタート (agent solve \--force-retrain)**  
+   * 小規模データで学習から推論までの一連のパイプラインが正常に完了することを確認します。  
+3. **人工脳シミュレーションの対話実行 (brain loop)**  
+   * 統合された認知アーキテクチャが、対話形式の入力に対してどのように応答するかを体感します。
 
-pytest -v tests/test_smoke_all_paradigms.py
+## **3\. コマンドリファレンス**
 
-### **1\. ユニットテスト・統合テストの実行**
+### **A) システム健全性チェック**
 
-プロジェクト全体のユニットテストおよび統合テストを実行し、すべてのコンポーネントが個別に、また連携して正しく動作することを確認します。これは、変更を加えた際の最も基本的な健全性チェックです。
+**目的:** プロジェクトの基本的な健全性を確認するためのテスト。
+
+#### **A-1. 全テストスイートの実行**
+
+プロジェクト全体のユニットテストおよび統合テストを実行し、すべてのコンポーネントが正しく動作することを確認します。
 
 pytest \-v
 
-### **2\. オンデマンド学習のクイックテスト**
+#### **A-2. 学習パラダイムの煙テスト**
 
-agent solveコマンドが、小規模なサンプルデータを使って、専門家モデルの（再）学習から推論までの一連のサイクルをエラーなく完了できるかを確認します。
+主要な学習パラダイム（勾配ベース、物理法則ベース、生物学的学習則など）が、ごく小規模なデータでエラーなく実行できるかを個別に検証します。
 
-python snn-cli.py agent solve \\  
-    \--task "高速テスト" \\  
-    \--prompt "これはテストです。" \\  
-    \--unlabeled-data data/sample\_data.jsonl \\  
-    \--force-retrain
+pytest \-v tests/test\_smoke\_all\_paradigms.py
 
-**Note:** このテストはシステムの動作確認用です。小規模データのため、AIは意味のある応答を生成できません。
+### **B) 学習とデータ準備**
 
-## **B) 主要機能・学習パイプラインテスト**
+**目的:** SNNモデルの学習や、そのために必要なデータセットを準備します。
 
-**目的:** 主要な学習パラダイムやデータ処理パイプラインが正しく機能することを確認します。
+#### **B-1. 手動での勾配ベース学習**
 
-### **3\. 標準的な勾配ベース学習**
+train.py を直接呼び出し、指定した設定ファイルに基づいてモデルを学習させます。詳細な学習設定の調整やデバッグに有用です。
 
-train.py を直接呼び出し、指定された設定で短時間の学習を完了できるかを確認します。
-
-python train.py \\  
-    \--model\_config configs/models/small.yaml \\  
+\# 使用例: mediumサイズのモデルをsample\_data.jsonlで3エポック学習  
+python snn-cli.py gradient-train \\  
+    \--model\_config configs/models/medium.yaml \\  
     \--data\_path data/sample\_data.jsonl \\  
     \--override\_config "training.epochs=3"
 
-### **4\. ANN-SNNモデル変換と知識蒸留**
+#### **B-2. 大規模データセットの準備**
 
-scripts/convert\_model.py を使用して、既存のANNモデルからSNNモデルを生成する2つの主要な手法をテストします。
-
-#### **4.1 重み変換テスト**
-
-Safetensors形式のモデルから重みを直接コピーする機能をテストします。（事前にダミーのsafetensorsファイルが必要です）
-
-\# 事前にダミーのANNモデルが必要です  
-\# python scripts/convert\_model.py \--method convert \--ann\_model\_path dummy\_ann.safetensors \--output\_snn\_path runs/converted\_model.pth
-
-#### **4.2 知識蒸留テスト**
-
-ANNモデルを教師役として、SNNモデルを蒸留学習させる機能をテストします。（事前にダミーのANNモデルが必要です）
-
-\# python scripts/convert\_model.py \--method distill \--ann\_model\_path dummy\_ann.safetensors \--output\_snn\_path runs/distilled\_model.pth
-
-### **5\. 思考プランナーの学習**
-
-PlannerSNNを学習させるためのスクリプトを実行します。（現在はダミーデータで動作確認）
-
-python train\_planner.py
-
-### **6\. 大規模データセットによるオンデマンド学習**
-
-wikitext-103を使い、汎用的な言語能力を持つ専門家モデルを育成します。AIの応答品質を本格的に向上させるには、このコマンドの実行が必要です。
-
-**ステップ 1: 大規模データセットの準備（初回のみ）**
+モデルの汎用的な言語能力を向上させるため、大規模な公開コーパス (WikiText-103) をダウンロードし、学習に適した形式に前処理します。
 
 python scripts/data\_preparation.py
 
-**ステップ 2: 本格的な学習の実行**
+#### **B-3. オンデマンド学習（知識蒸留）**
 
-python snn-cli.py agent solve \\  
-    \--task "汎用言語モデル" \\  
-    \--force-retrain
+自律エージェントに未知のタスクを与え、Webから収集した情報や既存のデータを用いて、タスク特化型の「専門家モデル」を自動的に生成（知識蒸留）させます。
 
-### **7\. 学習済みモデルとの対話**
+\# 使用例: wikitext-103を使って「汎用言語モデル」を育成  
+snn-cli.py agent solve \--task "汎用言語モデル" \--force-retrain
 
-上記の学習で育成した「汎用言語モデル」を呼び出して対話します。
+\# 使用例: 小規模データで「高速テスト」モデルを育成  
+snn-cli.py agent solve \--task "高速テスト" \--unlabeled-data data/sample\_data.jsonl \--force-retrain
 
-python snn-cli.py agent solve \\  
-    \--task "汎用言語モデル" \\  
-    \--prompt "SNNとは何ですか？"
+#### **B-4. 思考プランナーの学習**
 
-## **C) 高度な生物学的学習則の検証**
+PlannerSNN モデルを学習させます。これにより、プランナーは与えられた目標に対し、どの専門家スキルを選択すべきかをより正確に予測できるようになります。
 
-**目的:** バックプロパゲーションに依存しない、脳に着想を得た学習アルゴリズムの動作を検証します。
+python train\_planner.py
 
-### **8\. 基本的な強化学習**
+#### **B-5. ANNからSNNへのモデル変換**
 
-エージェントが複数ステップのGridWorld環境でタスクを学習できることを検証します。学習後、学習曲線グラフと訓練済みモデルがruns/rl\_results/に保存されます。
+既存のANNモデル（.safetensors, .gguf形式）からSNNモデルを生成します。
 
-python run\_rl\_agent.py \--episodes 1000 \--grid\_size 5 \--max\_steps 50
+\# 重みを直接コピーする手法  
+python scripts/convert\_model.py \--method convert \--ann\_model\_path dummy\_ann.safetensors \--output\_snn\_path runs/converted\_model.pth
 
-### **9\. 適応的因果スパース化を有効にした強化学習**
+\# 知識蒸留を行う手法  
+python scripts/convert\_model.py \--method distill \--ann\_model\_path dummy\_ann.safetensors \--output\_snn\_path runs/distilled\_model.pth
 
-貢献度の低いシナプスの学習を抑制する「適応的因果スパース化」を有効にして、CausalTraceCreditAssignment学習則を実行します。
+### **C) 高度な認知・自律機能**
 
-python train.py \--paradigm bio-causal-sparse \--config configs/base\_config.yaml
+**目的:** 学習済みのモデルや認知コンポーネントを連携させ、高度なタスクを実行します。
 
-### **10\. パーティクルフィルタによる確率的学習**
+#### **C-1. 学習済みモデルによるタスク解決**
 
-微分不可能なSNNを確率的なアンサンブルとして学習させるParticleFilterTrainerを実行します。
+オンデマンド学習などで育成した専門家モデルを呼び出して、特定のタスクを実行させます。
 
-python train.py \--paradigm bio-particle-filter \--config configs/base\_config.yaml
+\# 使用例: 学習済みの「汎用言語モデル」に質問する  
+snn-cli.py agent solve \--task "汎用言語モデル" \--prompt "SNNとは何ですか？"
 
-## **D) 高度な認知・自律機能テスト**
+#### **C-2. 階層プランナーによる複雑なタスクの実行**
 
-**目的:** 自己進化やマルチエージェント協調など、より高度なシステムの動作を確認します。
+複数の専門家スキルを組み合わせる必要がある複雑なタスクを、階層プランナーに依頼します。プランナーはタスクを分解し、最適な実行計画を立てます。
 
-### **11\. Webからの自律学習**
+snn-cli.py planner execute \\  
+    \--request "この記事を要約して、その内容の感情を分析してください。" \\  
+    \--context\_data "SNNは非常にエネルギー効率が高いことで知られている。"
 
-AIに新しいトピックをWebから自律的に学習させ、その知識に基づいた専門家モデルを生成させます。
+#### **C-3. 人工脳シミュレーション**
 
-python run\_web\_learning.py \\  
-    \--topic "最新の半導体技術" \\  
-    \--start\_url "\[https://pc.watch.impress.co.jp/\](https://pc.watch.impress.co.jp/)" \\  
-    \--max\_pages 10
+統合された認知アーキテクチャ (ArtificialBrain) 全体を動作させます。
 
-### **12\. 自己進化**
+\# 単一の入力で1サイクルだけ実行  
+snn-cli.py brain run \--input\_text "素晴らしい成功体験でした。"
 
-エージェントが自身の性能を評価し、アーキテクチャや学習パラメータ、さらには学習パラダイム自体を改善するプロセスをテストします。
+\# 対話形式で繰り返し実行  
+snn-cli.py brain loop
 
-python snn-cli.py evolve run \\  
+#### **C-4. デジタル生命体の自律ループ**
+
+AIが外部からの指示なしに、内発的動機（好奇心、退屈など）に基づいて自律的に思考・学習・自己改善するループを開始します。
+
+\# 5サイクルの間、自律的に活動させる  
+snn-cli.py life-form start \--cycles 5
+
+\# 直前の行動理由をAI自身に説明させる  
+snn-cli.py life-form explain-last-action
+
+#### **C-5. 自己進化**
+
+エージェントが自身の性能を評価し、アーキテクチャや学習パラメータ、学習パラダイム自体を改善するプロセスを1サイクル実行します。
+
+snn-cli.py evolve run \\  
     \--task\_description "高難度タスク" \\  
-    \--initial\_accuracy 0.4 \\  
-    \--model\_config "configs/models/small.yaml" \\  
-    \--training\_config "configs/base\_config.yaml"
+    \--initial\_accuracy 0.4
 
-### **13\. デジタル生命体の自律ループ**
+#### **C-6. 強化学習**
 
-AIが外部からの指示なしに、内発的動機に基づいて自律的に思考・学習するループを開始します。
+生物学的学習則（報酬変調型STDP）を用いるエージェントが、GridWorld環境内で試行錯誤を通じてタスクを学習するプロセスを開始します。
 
-python snn-cli.py life-form start \--cycles 10
+snn-cli.py rl run \--episodes 1000
 
-### **14\. マルチエージェントによる協調的タスク解決**
+#### **C-7. マルチエージェントによる協調的タスク解決**
 
 複数のエージェントが協調して単一の目標を解決する創発的システムを起動します。
 
-python snn-cli.py emergent-system execute \\  
+snn-cli.py emergent-system execute \\  
     \--goal "最新のAIトレンドを調査し、その内容を要約する"
 
-## **E) 統合アーキテクチャ・シミュレーション**
+### **D) 評価・分析・ハードウェア連携**
 
-### **15\. 人工脳 全体シミュレーション**
+**目的:** モデルの性能を定量的に評価し、将来のハードウェア展開を見据えたテストを実行します。
 
-これまでに実装された全ての認知コンポーネントを統合したArtificialBrainを起動し、感覚入力から思考、行動出力までの一連の認知サイクルをシミュレートします。
+#### **D-1. SNN vs ANN ベンチマーク**
 
-python run\_brain\_simulation.py
+SNNとANNの性能（精度、速度、エネルギー効率）を、標準的なベンチマークタスクで比較評価します。
 
-## **F) 将来機能・ハードウェア連携テスト**
+python scripts/run\_benchmark.py \--task sst2
 
-### **16\. ニューロモーフィック・コンパイラテスト**
+#### **D-2. ニューロモーフィック・コンパイラテスト**
 
-学習済みのBioSNNモデルを、Intel Loihiのようなニューロモーフィックハードウェア向けの構成ファイルに変換（コンパイル）する機能をテストします。
+学習済みのSNNモデルを、ニューロモーフィックハードウェア向けの構成ファイルに変換（コンパイル）し、その性能をシミュレートします。
 
 python scripts/run\_compiler\_test.py
 
-## **G) 対話UIの起動**
+### **E) 対話UI**
 
-### **17\. 標準UI**
+**目的:** GradioベースのWeb UIを起動し、モデルと対話します。
 
-Gradioベースの標準的な対話UIを起動します。
+#### **E-1. 標準UI**
 
-python snn-cli.py ui start \--model\_config configs/models/medium.yaml
+snn-cli.py ui start \--model\_config configs/models/medium.yaml
 
-### **18\. LangChain連携版UI**
+#### **E-2. LangChain連携版UI**
 
-SNNモデルをLangChainエージェントとしてラップした対話UIを起動します。
+snn-cli.py ui start-langchain \--model\_config configs/models/medium.yaml
 
-python snn-cli.py ui start-langchain \--model\_config configs/models/medium.yaml  
+### **F) 知識ベース管理**
+
+**目的:** 階層プランナーや自己参照に使用されるRAGシステムの知識ベースを管理します。
+
+#### **F-1. 知識ベースの構築**
+
+プロジェクト内のドキュメント (doc/ ディレクトリ) とエージェントの記憶ログから、ベクトルストアを構築します。
+
+python scripts/build\_knowledge\_base.py  
