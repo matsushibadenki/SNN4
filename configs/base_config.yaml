@@ -40,6 +40,7 @@ training:
       spike_reg_weight: 0.001
       sparsity_reg_weight: 0.0
       mem_reg_weight: 0.00001
+      ewc_weight: 400.0
     distillation:
       teacher_model: "gpt2"
       loss:
