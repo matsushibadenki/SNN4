@@ -6,6 +6,8 @@
 # - mypyエラーとNameErrorを解消するため、`SNNCore.__init__`メソッドの実装を修正。
 # - 新しいアーキテクチャ(SpikingMamba, SpikingHRM)を `model_map` に追加。
 # - 修正(v2): AttributeErrorを解消するため、BreakthroughSNNにd_model属性を保存する処理を追加。
+# - 修正(v3): ベンチマーク実行時のRuntimeErrorを解消するため、output_hidden_statesフラグに応じて
+#            モデルが出力を切り替えるよう修正。
 
 import torch
 import torch.nn as nn
@@ -122,9 +124,8 @@ class BreakthroughSNN(BaseModel):
         super().__init__()
         self.time_steps = time_steps
         self.num_layers = num_layers
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         self.d_model = d_model
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.d_state = d_state
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.input_encoder = nn.Linear(d_model, d_model)
 
@@ -139,7 +140,7 @@ class BreakthroughSNN(BaseModel):
         self.output_projection = nn.Linear(d_state * num_layers, vocab_size)
         self._init_weights()
 
-    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
         token_emb = self.token_embedding(input_ids)
@@ -158,11 +159,19 @@ class BreakthroughSNN(BaseModel):
             all_timestep_outputs.append(torch.stack(sequence_outputs, dim=1))
         
         final_hidden_states = all_timestep_outputs[-1]
-        logits = self.output_projection(final_hidden_states)
+        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        if output_hidden_states:
+             # 分類タスクなど、最終層の前の特徴量が必要な場合に備える
+             output = final_hidden_states
+        else:
+             output = self.output_projection(final_hidden_states)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=device)
-        return logits, avg_spikes, torch.tensor(0.0, device=device)
+        return output, avg_spikes, torch.tensor(0.0, device=device)
 
 class SpikingTransformer(BaseModel):
     def __init__(self, vocab_size: int, d_model: int, n_head: int, num_layers: int, time_steps: int, **kwargs: Any):
@@ -176,7 +185,7 @@ class SpikingTransformer(BaseModel):
         self.output_projection = nn.Linear(d_model, vocab_size)
         self._init_weights()
 
-    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
         x = self.token_embedding(input_ids)
@@ -199,11 +208,18 @@ class SpikingTransformer(BaseModel):
             cast(AdaptiveLIFNeuron, block.lif3).set_stateful(False)
 
         x_normalized = self.final_norm(x)
-        logits = self.output_projection(x_normalized)
+        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        if output_hidden_states:
+            output = x_normalized
+        else:
+            output = self.output_projection(x_normalized)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=device)
-        return logits, avg_spikes, torch.tensor(0.0, device=device)
+        return output, avg_spikes, torch.tensor(0.0, device=device)
 
 class SimpleSNN(BaseModel):
     def __init__(self, vocab_size: int, d_model: int, hidden_size: int, **kwargs: Any):
@@ -238,7 +254,6 @@ class SNNCore(nn.Module):
         model_type = self.config.get("architecture_type", "simple")
         self.model: nn.Module
         
-        # mypyとNameErrorを修正
         params: Dict[str, Any] = cast(Dict[str, Any], OmegaConf.to_container(self.config, resolve=True))
         params.pop('path', None)
         neuron_config = params.pop('neuron', {})
