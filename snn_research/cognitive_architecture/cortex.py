@@ -1,8 +1,11 @@
 # ファイルパス: snn_research/cognitive_architecture/cortex.py
-# (修正)
+# (更新)
 # 修正: mypyエラー [annotation-unchecked] を解消するため、__init__に戻り値の型ヒントを追加。
+# 改善(v2): ROADMAPフェーズ3に基づき、Hippocampusからの実際のエピソードを
+#            解釈してナレッジグラフを構築するロジックを実装。
 
 from typing import Dict, Any, Optional, List
+import re
 
 class Cortex:
     """
@@ -21,25 +24,35 @@ class Cortex:
         Args:
             episode (Dict[str, Any]):
                 Hippocampusから送られてきた単一の記憶エピソード。
-                {'source': 'concept_A', 'relation': 'is_a', 'target': 'category_X'}
-                のような構造を期待する。
         """
-        source = episode.get("source")
-        relation = episode.get("relation")
-        target = episode.get("target")
-
-        # sourceが文字列であることを明示的にチェック
-        if isinstance(source, str) and source and relation and target:
-            # 'source'がNoneでないことが保証されたため、安全にキーとして使用できる
-            if source not in self.knowledge_graph:
-                self.knowledge_graph[source] = []
-
-            # 新しい知識（関係性）を追加
-            self.knowledge_graph[source].append({"relation": relation, "target": target})
-            print(f"📚 大脳皮質: 新しい知識を固定しました: '{source}' --({relation})--> '{target}'")
+        source_input = episode.get("source_input")
+        
+        # 文字列の入力からキーワード（名詞や形容詞など）を簡易的に抽出
+        if isinstance(source_input, str):
+            # 5文字以上の単語をキーワードと見なす簡単なルール
+            keywords = set(re.findall(r'\b[a-zA-Z]{5,}\b', source_input.lower()))
+            
+            if len(keywords) > 1:
+                # 抽出されたキーワード間に「co-occurred_with」の関係を追加
+                keyword_list = list(keywords)
+                for i in range(len(keyword_list)):
+                    for j in range(i + 1, len(keyword_list)):
+                        self._add_relationship(keyword_list[i], "co-occurred_with", keyword_list[j])
+                        self._add_relationship(keyword_list[j], "co-occurred_with", keyword_list[i])
+                print(f"📚 大脳皮質: エピソードからキーワード間の関連性を学習しました: {keywords}")
+            elif not keywords:
+                 print("⚠️ 大脳皮質: 知識として統合するのに十分なキーワードが見つかりませんでした。")
         else:
             print("⚠️ 大脳皮質: 知識として統合するには情報が不十分なエピソードです。")
-            return
+
+    def _add_relationship(self, source: str, relation: str, target: Any) -> None:
+        """ナレッジグラフに関係性を追加する内部メソッド。"""
+        if source not in self.knowledge_graph:
+            self.knowledge_graph[source] = []
+        
+        # 重複する関係は追加しない
+        if not any(r['relation'] == relation and r['target'] == target for r in self.knowledge_graph[source]):
+            self.knowledge_graph[source].append({"relation": relation, "target": target})
 
 
     def retrieve_knowledge(self, concept: str) -> Optional[List[Dict[str, Any]]]:
