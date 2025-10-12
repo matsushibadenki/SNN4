@@ -7,21 +7,25 @@
 # 改善点 (v5): retrieve_similar_experiences のダミー実装を
 #              TF-IDFに基づくベクトル類似度検索に置き換え。
 # 修正点: mypyエラー [import-untyped] を解消するため、type: ignoreを追加。
+# 改善点(v6): RAGSystemと連携し、記憶の記録と検索をセマンティックに行うように強化。
 
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import os
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
-from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from sklearn.feature_extraction.text import TfidfVectorizer # type: ignore
+from sklearn.metrics.pairwise import cosine_similarity # type: ignore
+from snn_research.cognitive_architecture.rag_snn import RAGSystem # ◾️ 追加
 
 class Memory:
     """
-    エージェントの経験を構造化されたタプルとして長期記憶に記録するクラス。
+    エージェントの経験を構造化されたタプルとして長期記憶に記録し、
+    RAGSystemと連携してセマンティック検索を行うクラス。
     """
-    def __init__(self, memory_path: Optional[str] = "runs/agent_memory.jsonl"):
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    def __init__(self, rag_system: RAGSystem, memory_path: Optional[str] = "runs/agent_memory.jsonl"):
+        self.rag_system = rag_system
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if memory_path is None:
             print("⚠️ MemoryにNoneのパスが渡されたため、デフォルト値 'runs/agent_memory.jsonl' を使用します。")
             self.memory_path: str = "runs/agent_memory.jsonl"
@@ -30,6 +34,14 @@ class Memory:
         
         if os.path.dirname(self.memory_path):
             os.makedirs(os.path.dirname(self.memory_path), exist_ok=True)
+
+    def _experience_to_text(self, experience: Dict[str, Any]) -> str:
+        """経験の辞書を検索可能なテキスト形式に変換する。"""
+        action = experience.get("action", "NoAction")
+        result = experience.get("result", {})
+        reward = experience.get("reward", {}).get("external", 0.0)
+        reason = experience.get("decision_context", {}).get("reason", "NoReason")
+        return f"Action '{action}' was taken because '{reason}', resulting in '{str(result)}' with a reward of {reward:.2f}."
 
     def record_experience(
         self,
@@ -42,11 +54,7 @@ class Memory:
         causal_snapshot: Optional[str] = None
     ):
         """
-        単一の経験を記録する。
-
-        Args:
-            (省略)
-            causal_snapshot (Optional[str]): 成功に寄与した因果関係のスナップショット。
+        単一の経験を記録し、その内容をRAGシステムのベクトルストアにも追加する。
         """
         experience_tuple = {
             "timestamp": datetime.utcnow().isoformat(),
@@ -58,49 +66,48 @@ class Memory:
             "decision_context": decision_context,
             "causal_snapshot": causal_snapshot,
         }
+        # ログファイルへの追記
         with open(self.memory_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(experience_tuple, ensure_ascii=False) + "\n")
-
+        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # 経験をテキスト化してRAGシステムにリアルタイムで追加
+        experience_text = self._experience_to_text(experience_tuple)
+        self.rag_system.add_relationship(
+            source_concept=f"experience_{experience_tuple['timestamp']}",
+            relation="is_described_as",
+            target_concept=experience_text
+        )
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     def retrieve_similar_experiences(self, query_state: Dict[str, Any], top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        現在の状態に類似した過去の経験をTF-IDFベクトル検索で検索する。
+        現在の状態に類似した過去の経験をRAGSystemのセマンティック検索で検索する。
         """
-        experiences = []
-        try:
-            with open(self.memory_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    experiences.append(json.loads(line))
-        except FileNotFoundError:
-            return []
-        
-        if not experiences:
+        if not self.rag_system.vector_store:
+            print("⚠️ 記憶検索のためのベクトルストアが初期化されていません。")
             return []
 
-        # 状態からテキスト表現を抽出 (この例では'action'と'result'を使用)
-        def get_text_from_exp(exp: Dict[str, Any]) -> str:
-            action = exp.get("action", "")
-            result = exp.get("result", {})
-            result_str = str(result.get("details", "") or result.get("info", ""))
-            return f"{action} {result_str}"
-
-        corpus = [get_text_from_exp(exp) for exp in experiences]
-        query_text = get_text_from_exp({"action": query_state.get("last_action"), "result": query_state.get("last_result")})
+        # クエリ状態をテキストに変換
+        query_text = f"Find similar past experiences for a situation where the last action was '{query_state.get('last_action')}' and the result was '{str(query_state.get('last_result'))}'."
         
-        try:
-            vectorizer = TfidfVectorizer().fit(corpus)
-            corpus_vectors = vectorizer.transform(corpus)
-            query_vector = vectorizer.transform([query_text])
-            
-            similarities = cosine_similarity(query_vector, corpus_vectors).flatten()
-            
-            # 類似度が高い順にインデックスを取得
-            top_indices = similarities.argsort()[-top_k:][::-1]
-            
-            return [experiences[i] for i in top_indices]
-        except ValueError:
-            # コーパスが空の場合など
-            return experiences[-top_k:]
+        print(f"🧠
 
+ 過去の経験を検索中: {query_text}")
+        
+        # RAGSystemを使って類似のドキュメント（経験）を検索
+        search_results = self.rag_system.search(query_text, k=top_k)
+
+        # 検索結果のテキストから元の経験データを再構築（この例ではテキストをそのまま返す）
+        reconstructed_experiences = []
+        for res_text in search_results:
+            reconstructed_experiences.append({
+                "retrieved_text": res_text
+            })
+
+        return reconstructed_experiences
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def retrieve_successful_experiences(self, top_k: int = 5) -> List[Dict[str, Any]]:
         """
