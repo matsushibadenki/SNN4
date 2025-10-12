@@ -1,8 +1,9 @@
 # ファイルパス: tests/cognitive_architecture/test_artificial_brain.py
-# (修正)
+# (更新)
 # 修正: DIコンテナの階層構造に合わせて、rag_systemに正しくアクセスするよう修正。
 # 改善(v2): ロードマップ フェーズ5 に基づき、認知サイクル実行後の状態変化を
 #           具体的に検証するアサーションを追加。
+# 改善(v3): 記憶の固定化プロセスを検証するテストを追加。
 
 import sys
 from pathlib import Path
@@ -23,7 +24,6 @@ def brain_container():
     container.config.from_yaml("configs/models/small.yaml")
     
     # RAGSystemの初回セットアップをシミュレート
-    # rag_systemはagent_containerの配下にあるため、正しくアクセスする
     rag_system = container.agent_container.rag_system()
     if not rag_system.vector_store:
         rag_system.setup_vector_store()
@@ -40,37 +40,51 @@ def test_artificial_brain_instantiation(brain_container: BrainContainer):
     assert brain.motor is not None
     print("✅ ArtificialBrainインスタンスの構築に成功しました。")
 
-def test_cognitive_cycle_runs_and_updates_state(brain_container: BrainContainer):
+def test_cognitive_cycle_runs_and_consolidates_memory(brain_container: BrainContainer):
     """
-    run_cognitive_cycleがサンプル入力に対してエラーなく実行され、
-    各モジュールの内部状態が意図通りに更新されるかテストする。
+    run_cognitive_cycleが実行され、記憶の固定化が正しく行われるかテストする。
     """
     brain: ArtificialBrain = brain_container.artificial_brain()
     
-    test_input = "これはシステム全体の統合テストです。"
+    # サイクル実行前の状態
+    initial_cortex_size = len(brain.cortex.get_all_knowledge())
     
-    # 実行前の状態を確認
-    initial_hippocampus_size = len(brain.hippocampus.working_memory)
+    # 記憶の固定がトリガーされるまで5回サイクルを実行
+    test_inputs = [
+        "This is a test about system integration.",
+        "Another test focused on memory and learning.",
+        "A third input to populate the hippocampus.",
+        "Fourth cycle continues the process.",
+        "Fifth cycle should trigger consolidation."
+    ]
     
     try:
-        brain.run_cognitive_cycle(test_input)
-        print(f"✅ 認知サイクルが入力 '{test_input}' に対して正常に完了しました。")
+        for i, text in enumerate(test_inputs):
+            brain.run_cognitive_cycle(text)
+            # 5サイクル目に統合が起こることを確認
+            if i < 4:
+                assert len(brain.hippocampus.working_memory) == i + 1
+            else:
+                # 5サイクル目にクリアされるはず
+                assert len(brain.hippocampus.working_memory) == 0
+
+        print(f"✅ 5回の認知サイクルが正常に完了しました。")
     except Exception as e:
         pytest.fail(f"run_cognitive_cycleで予期せぬエラーが発生しました: {e}")
 
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     # 実行後の状態変化を検証
-    # 1. 海馬（短期記憶）に新しいエピソードが記録されたか
-    assert len(brain.hippocampus.working_memory) == initial_hippocampus_size + 1, \
-        "海馬のワーキングメモリに新しいエピソードが追加されていません。"
-    
-    # 2. 記録されたエピソードの内容が正しいか
-    latest_episode = brain.hippocampus.retrieve_recent_episodes(1)[0]
-    assert latest_episode is not None, "海馬から最新のエピソードを取得できませんでした。"
-    assert latest_episode['source_input'] == test_input, \
-        f"記録されたエピソードの入力が一致しません: expected '{test_input}', got '{latest_episode['source_input']}'"
-    assert 'features' in latest_episode['content'], \
-        "記録されたエピソードに知覚結果（features）が含まれていません。"
+    # 1. 海馬（短期記憶）がクリアされたか
+    assert len(brain.hippocampus.working_memory) == 0, \
+        "5サイクル後に海馬のワーキングメモリがクリアされていません。"
         
-    print("✅ 認知サイクル後の状態変化（海馬への記憶）を正常に確認しました。")
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    # 2. 大脳皮質（長期記憶）に新しい知識が追加されたか
+    final_cortex_size = len(brain.cortex.get_all_knowledge())
+    assert final_cortex_size > initial_cortex_size, \
+        "大脳皮質のナレッジグラフに新しい知識が追加されていません。"
+        
+    # 3. 記録された知識の内容を簡易的に確認
+    knowledge = brain.cortex.retrieve_knowledge("system")
+    assert knowledge is not None
+    assert any(rel['target'] == 'integration' for rel in knowledge)
+        
+    print("✅ 記憶の固定化プロセスが正しく実行されたことを確認しました。")
