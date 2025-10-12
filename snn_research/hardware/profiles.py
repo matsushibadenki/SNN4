@@ -1,4 +1,4 @@
-# snn_research/hardware/profiles.py
+# ファイルパス: snn_research/hardware/profiles.py
 # (新規作成)
 # Title: ニューロモーフィック・ハードウェアプロファイル
 # Description: ROADMAPフェーズ4「ハードウェア展開」に基づき、
