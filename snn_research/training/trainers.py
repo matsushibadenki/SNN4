@@ -9,6 +9,7 @@
 # 修正点(v4): mypyエラー[union-attr]および[operator]を解消するため、
 #            可視化ロジックをPyTorchのフックを用いた安全な実装に変更。
 # 修正点(v5): EWC実装時のコピー＆ペーストミスに起因するmypyエラーを修正。
+# 修正点(v6): 継続学習(EWC)のためのFisher行列計算・保存機能を追加。
 
 import torch
 import torch.nn as nn
@@ -76,47 +77,36 @@ class BreakthroughTrainer:
 
         input_ids, target_ids = [t.to(self.device) for t in batch[:2]]
         
-        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
-        # 可視化のためのフックを設定
         hooks = []
         if not is_train and self.enable_visualization and self.rank in [-1, 0] and hasattr(self, 'recorder'):
             self.recorder.clear()
             model_to_run = self.model.module if isinstance(self.model, nn.parallel.DistributedDataParallel) else self.model
             
             def record_hook(module, input, output):
-                # AdaptiveLIFNeuronの出力は (spike, mem) のタプル
                 spike, mem = output
-                # 閾値を取得
                 if hasattr(module, 'adaptive_threshold') and module.adaptive_threshold is not None:
                     threshold = module.adaptive_threshold
                 else:
-                    # adaptive_thresholdがない場合はbase_thresholdを使用
                     threshold = module.base_threshold.unsqueeze(0).expand_as(mem)
 
-                # 最初のバッチサンプルの状態のみ記録
                 self.recorder.record(
                     membrane=mem[0:1].detach(), 
                     threshold=threshold[0:1].detach(), 
                     spikes=spike[0:1].detach()
                 )
 
-            # 最初のAdaptiveLIFNeuron層にフックを登録
             for module in model_to_run.modules():
                 if isinstance(module, AdaptiveLIFNeuron):
                     hooks.append(module.register_forward_hook(record_hook))
-                    break # 1層のみ記録
-        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
-
+                    break 
+        
         with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
             with torch.set_grad_enabled(is_train):
                 logits, spikes, mem = self.model(input_ids, return_spikes=True, return_full_mems=True)
                 loss_dict = self.criterion(logits, target_ids, spikes, mem, self.model)
         
-        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
-        # フォワードパス後にフックを削除
         for hook in hooks:
             hook.remove()
-        # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
 
         if is_train:
             self.optimizer.zero_grad()
@@ -163,7 +153,6 @@ class BreakthroughTrainer:
 
         return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
-
     def train_epoch(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
         total_metrics: Dict[str, float] = collections.defaultdict(float)
         num_batches = len(dataloader)
@@ -189,7 +178,6 @@ class BreakthroughTrainer:
                 self.writer.add_scalar('Train/learning_rate', self.optimizer.param_groups[0]['lr'], epoch)
         
         return avg_metrics
-
 
     def evaluate(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
         total_metrics: Dict[str, float] = collections.defaultdict(float)
@@ -218,7 +206,6 @@ class BreakthroughTrainer:
                     print(f"⚠️ Failed to generate neuron dynamics plot: {e}")
 
         return avg_metrics
-
 
     def save_checkpoint(self, path: str, epoch: int, metric_value: float, **kwargs: Any):
         if self.rank in [-1, 0]:
@@ -277,7 +264,8 @@ class BreakthroughTrainer:
         
         fisher_matrix: Dict[str, torch.Tensor] = {}
         for name, param in self.model.named_parameters():
-            fisher_matrix[name] = torch.zeros_like(param.data)
+            if param.requires_grad:
+                fisher_matrix[name] = torch.zeros_like(param.data)
 
         for batch in tqdm(dataloader, desc=f"Computing Fisher Matrix for {task_name}"):
             self.model.zero_grad()
@@ -291,13 +279,12 @@ class BreakthroughTrainer:
                 if param.grad is not None:
                     fisher_matrix[name] += param.grad.data.pow(2) / len(dataloader)
 
-        # 計算したFisher行列と現在の最適なパラメータを損失関数に保存
         if isinstance(self.criterion, CombinedLoss):
             self.criterion.fisher_matrix.update(fisher_matrix)
             for name, param in self.model.named_parameters():
-                self.criterion.optimal_params[name] = param.data.clone()
+                if name in fisher_matrix:
+                    self.criterion.optimal_params[name] = param.data.clone()
             
-            # ディスクにも保存して永続化
             ewc_data_path = Path(self.writer.log_dir) / f"ewc_data_{task_name}.pt"
             torch.save({
                 'fisher_matrix': self.criterion.fisher_matrix,
