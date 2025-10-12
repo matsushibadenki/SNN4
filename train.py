@@ -134,12 +134,11 @@ def train(
         if args.resume_path:
             trainer.load_checkpoint(args.resume_path)
         
-        # trainerが内部で持つepochカウンターを基準にループする
         while trainer.epoch < config['training']['epochs']:
             current_epoch = trainer.epoch
             if train_sampler: train_sampler.set_epoch(current_epoch)
             
-            trainer.train_epoch(train_loader) # 引数なしで呼び出し
+            trainer.train_epoch(train_loader)
             
             if rank in [-1, 0] and (current_epoch % config['training']['eval_interval'] == 0 or current_epoch == config['training']['epochs'] - 1):
                 val_metrics = trainer.evaluate(val_loader, current_epoch)
