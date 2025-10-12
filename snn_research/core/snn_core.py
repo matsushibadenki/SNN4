@@ -5,6 +5,7 @@
 # - 循環インポートを解消するため、共有クラスを `base.py` に移動し、そこからインポートする。
 # - mypyエラーとNameErrorを解消するため、`SNNCore.__init__`メソッドの実装を修正。
 # - 新しいアーキテクチャ(SpikingMamba, SpikingHRM)を `model_map` に追加。
+# - 修正(v2): AttributeErrorを解消するため、BreakthroughSNNにd_model属性を保存する処理を追加。
 
 import torch
 import torch.nn as nn
@@ -121,6 +122,9 @@ class BreakthroughSNN(BaseModel):
         super().__init__()
         self.time_steps = time_steps
         self.num_layers = num_layers
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.d_model = d_model
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.input_encoder = nn.Linear(d_model, d_model)
 
@@ -164,6 +168,7 @@ class SpikingTransformer(BaseModel):
     def __init__(self, vocab_size: int, d_model: int, n_head: int, num_layers: int, time_steps: int, **kwargs: Any):
         super().__init__()
         self.time_steps = time_steps
+        self.d_model = d_model
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.pos_embedding = nn.Parameter(torch.randn(1, 1024, d_model))
         self.layers = nn.ModuleList([STAttenBlock(d_model, n_head) for _ in range(num_layers)])
@@ -233,7 +238,6 @@ class SNNCore(nn.Module):
         model_type = self.config.get("architecture_type", "simple")
         self.model: nn.Module
         
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         # mypyとNameErrorを修正
         params: Dict[str, Any] = cast(Dict[str, Any], OmegaConf.to_container(self.config, resolve=True))
         params.pop('path', None)
@@ -250,8 +254,6 @@ class SNNCore(nn.Module):
             raise ValueError(f"Unknown model type: {model_type}")
         
         self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         return self.model(*args, **kwargs)
-
