@@ -8,6 +8,7 @@
 #              TF-IDFに基づくベクトル類似度検索に置き換え。
 # 修正点: mypyエラー [import-untyped] を解消するため、type: ignoreを追加。
 # 改善点(v6): RAGSystemと連携し、記憶の記録と検索をセマンティックに行うように強化。
+# 修正点(v7): Unterminated string literalの構文エラーを修正。
 
 import json
 from datetime import datetime
@@ -15,17 +16,15 @@ from typing import List, Dict, Any, Optional
 import os
 from sklearn.feature_extraction.text import TfidfVectorizer # type: ignore
 from sklearn.metrics.pairwise import cosine_similarity # type: ignore
-from snn_research.cognitive_architecture.rag_snn import RAGSystem # ◾️ 追加
+from snn_research.cognitive_architecture.rag_snn import RAGSystem
 
 class Memory:
     """
     エージェントの経験を構造化されたタプルとして長期記憶に記録し、
     RAGSystemと連携してセマンティック検索を行うクラス。
     """
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     def __init__(self, rag_system: RAGSystem, memory_path: Optional[str] = "runs/agent_memory.jsonl"):
         self.rag_system = rag_system
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if memory_path is None:
             print("⚠️ MemoryにNoneのパスが渡されたため、デフォルト値 'runs/agent_memory.jsonl' を使用します。")
             self.memory_path: str = "runs/agent_memory.jsonl"
@@ -70,7 +69,6 @@ class Memory:
         with open(self.memory_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(experience_tuple, ensure_ascii=False) + "\n")
         
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         # 経験をテキスト化してRAGシステムにリアルタイムで追加
         experience_text = self._experience_to_text(experience_tuple)
         self.rag_system.add_relationship(
@@ -78,9 +76,7 @@ class Memory:
             relation="is_described_as",
             target_concept=experience_text
         )
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     def retrieve_similar_experiences(self, query_state: Dict[str, Any], top_k: int = 5) -> List[Dict[str, Any]]:
         """
         現在の状態に類似した過去の経験をRAGSystemのセマンティック検索で検索する。
@@ -92,9 +88,9 @@ class Memory:
         # クエリ状態をテキストに変換
         query_text = f"Find similar past experiences for a situation where the last action was '{query_state.get('last_action')}' and the result was '{str(query_state.get('last_result'))}'."
         
-        print(f"🧠
-
- 過去の経験を検索中: {query_text}")
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        print(f"🧠  過去の経験を検索中: {query_text}")
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         # RAGSystemを使って類似のドキュメント（経験）を検索
         search_results = self.rag_system.search(query_text, k=top_k)
@@ -107,7 +103,6 @@ class Memory:
             })
 
         return reconstructed_experiences
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def retrieve_successful_experiences(self, top_k: int = 5) -> List[Dict[str, Any]]:
         """
