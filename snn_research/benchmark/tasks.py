@@ -1,4 +1,4 @@
-# matsushibadenki/snn4/snn_research/benchmark/tasks.py
+# matsushibadenki/snn_research/benchmark/tasks.py
 # ベンチマークタスクの定義ファイル
 #
 # (省略)
@@ -14,6 +14,9 @@
 #
 # 修正点(v3):
 # - 循環参照エラーを解消するため、TASK_REGISTRYの定義を __init__.py に移動。
+#
+# 修正点(v4):
+# - mypyエラー[arg-type]を解消するため、SNNCoreに渡す設定をDictConfigに変換。
 
 import os
 import json
@@ -25,6 +28,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedTokenizerBase
+from omegaconf import OmegaConf # ◾️ 追加
 
 from snn_research.core.snn_core import BreakthroughSNN, SNNCore
 from snn_research.benchmark.ann_baseline import ANNBaselineModel
@@ -135,7 +139,10 @@ class SST2Task(BenchmarkTask):
                 "n_head": 2,
                 "neuron": {'type': 'lif'}
             }
-            backbone = SNNCore(config=snn_config, vocab_size=vocab_size)
+            # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
+            # DictConfigに変換
+            backbone = SNNCore(config=OmegaConf.create(snn_config), vocab_size=vocab_size)
+            # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
             return SNNClassifier(backbone)
         else:
             ann_params = {'d_model': 64, 'd_hid': 128, 'nlayers': 2, 'nhead': 2, 'num_classes': 2}
