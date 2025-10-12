@@ -25,6 +25,7 @@ from snn_research.training.trainers import BreakthroughTrainer, ParticleFilterTr
 from snn_research.training.bio_trainer import BioRLTrainer
 from scripts.data_preparation import prepare_wikitext_data
 from snn_research.core.snn_core import SNNCore
+from app.utils import get_auto_device
 
 # DIコンテナのセットアップ
 container = TrainingContainer()
@@ -169,12 +170,6 @@ def collate_fn(tokenizer, is_distillation: bool) -> Callable[[List[Tuple[torch.T
             return padded_inputs.long(), padded_targets.long(), padded_logits
         return padded_inputs.long(), padded_targets.long()
     return collate
-    
-def get_auto_device() -> str:
-    """実行環境に最適なデバイスを自動的に選択する。"""
-    if torch.cuda.is_available(): return "cuda"
-    if torch.backends.mps.is_available(): return "mps"
-    return "cpu"
     
 def main():
     parser = argparse.ArgumentParser(description="SNN 統合学習スクリプト")
