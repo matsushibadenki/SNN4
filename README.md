@@ -1,4 +1,4 @@
-# **Project SNN: A Predictive Digital Life Form (v5.0)**
+# **Project SNN: A Predictive Digital Life Form (v6.0)**
 
 ## **1\. 概要**
 
@@ -9,99 +9,71 @@
 このシステムは、単なるチャットボットではなく、以下の高度な認知能力を備えた自律エージェントとして動作します。
 
 * **先進的なSNNアーキテクチャ:** 脳の働きに着想を得た**予測符号化モデル**、時間情報処理能力を最大化する**スパイキングトランスフォーマー**、長文脈処理に革命をもたらす**スパイキングMAMBA**に加え、脳の情報処理階層を模倣する\*\*階層的循環記憶（Spiking-HRM）\*\*モデルを導入。これにより、短期的な情報と長期的な文脈を統合し、より深い未来予測を実現します。  
-* **オンデマンド学習:** 未知のタスクに直面した際、大規模言語モデルから知識を蒸留し、タスクに特化した超省エネルギーな「専門家SNN」を自律的に生成します。  
-* **自己認識と計画立案:** 自身の能力（学習済み専門家モデル）を把握し、学習済みのプランナーSNNを用いて、複雑なタスクをサブタスクに分解し、最適な実行計画を動的に推論します。  
-* **アーキテクチャレベルの自己進化:** 自らの性能を評価し、表現力不足と判断した場合、自身のソースコード（モデルの層数や次元数）を自律的に修正し、より強力なアーキテクチャへと進化します。  
+* **オンデマンド学習:** 未知のタスクに直面した際、Web検索でリアルタイムに情報を収集したり、大規模言語モデルから知識を蒸留したりして、タスクに特化した超省エネルギーな「専門家SNN」を自律的に生成します。  
+* **自己認識と計画立案:** 自身の能力（学習済み専門家モデル）と記憶（過去の経験）を把握し、学習済みのプランナーSNNを用いて、複雑なタスクをサブタスクに分解し、最適な実行計画を動的に推論します。  
+* **アーキテクチャレベルの自己進化:** 自らの性能を評価し、表現力不足と判断した場合、自身のソースコード（モデルの層数や次元数、さらには学習パラダイム自体）を自律的に修正し、より強力なアーキテクチャへと進化します。  
 * **行動を通じた学習（強化学習）:** バックプロパゲーションを使わない生物学的な学習則（報酬変調型STDP）を用い、環境との試行錯誤から直接スキルを学習する能力を持ちます。
 
 ## **2\. システムアーキテクチャ**
 
-本システムの認知アーキテクチャは、複数の専門コンポーネントが階層的に連携することで実現されています。
+本システムの認知アーキテクチャは、統合CLIツール snn-cli.py を起点とし、各コマンドが対応する認知機能を呼び出す形で構成されています。
 
 ```mermaid
 graph TD  
-    CLI\["snn-cli.py 統合CLIツール"\]
-
-    subgraph "Phase 6: 自律的存在"  
-        LifeForm\["life-form start"\]  
-        Motivation\["Physics-Aware IntrinsicMotivationSystem"\]  
-        Decision{"探求 or 自己改善?"}
-
-        LifeForm \--\> Motivation  
-        Motivation \--\> Decision
-
-        subgraph "探求"  
-            ExploreDecision{"思考 or 行動?"}  
-            Planner\["planner execute\<br/\>思考による探求"\]  
-            RLAgent\["rl run\<br/\>行動による探求"\]
-
-            Decision \--\>|"探求\<br/\>退屈"| ExploreDecision  
-            ExploreDecision \--\>|"思考"| Planner  
-            ExploreDecision \--\>|"行動"| RLAgent  
-        end
-
-        subgraph "自己改善"  
-            Evolution\["evolve run\<br/\>自己アーキテクチャを分析修正"\]  
-            Benchmark\["run\_benchmark.py"\]
-
-            Decision \--\>|"改善\<br/\>現状不満"| Evolution  
-            Evolution \--\> Benchmark  
-        end  
-    end
-
-    subgraph "Phase 3-5: 高次認知実行コア"  
-        Planner \--\> Workspace\["GlobalWorkspace"\]  
-        SpikingHRM \--\> Workspace  
-        Workspace \--\>|"サブタスク実行"| Specialist\["専門家SNN"\]  
-        Workspace \--\>|"知識が必要"| RAG\["RAGSystem\<br/\>ベクトルストア検索"\]  
-    end
-
-    subgraph "Phase 0-2.5: 学習推論エンジン"  
-        subgraph "学習"  
-            TrainPy\["train.py"\]  
-            SNN\_Core\["SNNバックボーン\<br/\>(Transformer, MAMBA, etc.)"\]  
-            SpikingHRM\["SpikingHRM\<br/\>階層的予測メモリ"\]  
-            MetaSNN\["MetaCognitiveSNN"\]  
-            TrainPy \--\> SNN\_Core  
-            SNN\_Core \--\>|"各層を構成"| SpikingHRM  
-            SpikingHRM \--\> MetaSNN  
-        end  
-        subgraph "推論"  
-            Specialist \--\> Deployment\["SNNInferenceEngine"\]  
-        end  
-    end
-
-    subgraph "オンデマンド学習"  
-        Agent\["agent solve"\]  
-        Agent \--\>|"未知のタスク"| TrainPy  
-        Agent \--\>|"モデル検索"| Registry\["ModelRegistry"\]  
-    end
-
-    CLI \--\> LifeForm  
-    CLI \--\> Planner  
-    CLI \--\> RLAgent  
-    CLI \--\> Evolution  
-    CLI \--\> Agent  
-    CLI \--\> TrainPy
-
-    classDef cli fill:\#b39ddb,stroke:\#333,stroke-width:3px  
-    classDef life fill:\#cde4ff,stroke:\#333,stroke-width:1px  
-    classDef action fill:\#ffe4c4,stroke:\#333,stroke-width:1px  
-    classDef agent fill:\#d4edda,stroke:\#333,stroke-width:1px  
-    classDef train fill:\#f8d7da,stroke:\#333,stroke-width:1px  
-    classDef core fill:\#fff2cd,stroke:\#333,stroke-width:2px  
-    classDef hrm fill:\#d2b4de,stroke:\#333,stroke-width:2px  
-      
-    class CLI cli  
-    class LifeForm,Motivation,Decision,ExploreDecision,Evolution,Benchmark life  
-    class Planner,RLAgent action  
-    class Agent agent  
-    class TrainPy train  
-    class SNN\_Core core  
-    class SpikingHRM hrm
-```
+    CLI["snn-cli.py<br/>統合CLIツール"]
     
-HRM（階層的循環記憶）モデルの導入は、本アーキテクチャの核心的なアップグレードです。これは、異なる時間スケールで情報を処理する複数の層から構成され、下位層が高速な知覚データを扱い、上位層がそれを抽象化して長期的な文脈を形成します。この階層的な未来予測モデルは、GlobalWorkspaceと思考の中核をなし、より人間らしい思考プロセスを実現します。
+    subgraph Orchestration["自律実行と思考のオーケストレーション"]  
+        LifeForm["DigitalLifeForm<br/>(デジタル生命体)"]  
+        Motivation["内発的動機システム"]  
+        MetaCognition["メタ認知SNN"]  
+          
+        LifeForm -- "思考・行動を<br/>オーケストレーション" --> Agent_Autonomous["AutonomousAgent<br/>(タスク実行・Web学習)"]  
+        LifeForm -- "思考・行動を<br/>オーケストレーション" --> Agent_SelfEvolving["SelfEvolvingAgent<br/>(自己進化)"]  
+        LifeForm -- "思考・行動を<br/>オーケストレーション" --> Agent_RL["ReinforcementLearnerAgent<br/>(強化学習)"]
+        LifeForm -- "内部状態を監視" --> Motivation  
+        LifeForm -- "パフォーマンスを評価" --> MetaCognition  
+    end
+    
+    subgraph Cognition["高次認知機能"]  
+        Planner["HierarchicalPlanner<br/>(階層プランナー)"]  
+        Memory["Memory<br/>(RAG連携 長期記憶)"]  
+        RAG["RAGSystem<br/>(ベクトル検索)"]
+        
+        Planner -- "記憶を検索" --> Memory  
+        Memory -- "ベクトル検索を利用" --> RAG  
+    end
+    
+    subgraph Engine["中核エンジン：学習と推論"]  
+        TrainPy["train.py<br/>(学習パイプライン)"]  
+        SNN_Core["SNN_Core<br/>(Transformer, Mamba, HRM等)"]  
+        BioRules["生物学的学習則<br/>(STDP, 因果追跡)"]  
+        InferenceEngine["SNNInferenceEngine<br/>(推論エンジン)"]
+        
+        TrainPy -- "モデルを訓練" --> SNN_Core  
+        TrainPy -- "学習則を利用" --> BioRules  
+        InferenceEngine -- "モデルをロード" --> SNN_Core  
+    end
+    
+    CLI -- "life-form start" --> LifeForm  
+    CLI -- "agent solve" --> Agent_Autonomous  
+    CLI -- "evolve run" --> Agent_SelfEvolving  
+    CLI -- "rl run" --> Agent_RL  
+    CLI -- "planner execute" --> Planner  
+    CLI -- "gradient-train" --> TrainPy
+    
+    classDef cli fill:#b39ddb,stroke:#333,stroke-width:3px,color:#fff  
+    classDef orchestrator fill:#cde4ff,stroke:#333,stroke-width:2px  
+    classDef agent fill:#d4edda,stroke:#333,stroke-width:1px  
+    classDef cognition fill:#ffe4c4,stroke:#333,stroke-width:1px  
+    classDef engine fill:#f8d7da,stroke:#333,stroke-width:1px
+    
+    class CLI cli  
+    class LifeForm,Motivation,MetaCognition orchestrator  
+    class Agent_Autonomous,Agent_SelfEvolving,Agent_RL agent  
+    class Planner,Memory,RAG cognition  
+    class TrainPy,SNN_Core,BioRules,InferenceEngine engine
+```
+
 
 ## **3\. システムの実行方法**
 
@@ -111,13 +83,15 @@ HRM（階層的循環記憶）モデルの導入は、本アーキテクチャ�
 
 pip install \-r requirements.txt
 
-### **ステップ2: 統合CLIツール snn-cli.py の使い方**
+### **ステップ2: システム健全性チェック（推奨）**
 
-本プロジェクトの全ての機能は、snn-cli.py という単一のコマンドから実行できます。
+プロジェクト全体のユニットテストおよび統合テストを実行し、すべてのコンポーネントが正しく動作することを確認します。
 
-### **A) クイックスタート：迅速な機能テスト（数分で完了）**
+pytest \-v
 
-**目的:** システム全体がエラーなく動作することを確認します。
+### **ステップ3: クイックスタート \- オンデマンド学習と推論（数分で完了）**
+
+**目的:** システム全体（オンデマンド学習〜推論）のパイプラインが正常に完了することを確認します。
 
 python snn-cli.py agent solve \\  
     \--task "高速テスト" \\  
@@ -127,17 +101,17 @@ python snn-cli.py agent solve \\
 
 **Note:** このテストはあくまでシステムの動作確認用です。**使用するデータが非常に小さいため、AIは意味のある応答を生成できません。** 応答が空になるのは、学習データ不足による正常な動作です。
 
-### **B) 本格実行：SNNの能力を向上させるための学習と対話**
+### **ステップ4: 本格実行 \- 大規模学習と対話**
 
 **目的:** 大規模データセットでAIを本格的に学習させ、意味のある応答を生成できるようにします。
 
-#### **ステップB-1: 大規模データセットの準備（初回のみ）**
+#### **ステップ4-1: 大規模データセットの準備（初回のみ）**
 
 wikitext-103（100万行以上のテキスト）をダウンロードし、学習用に整形します。
 
 python scripts/data\_preparation.py
 
-#### **ステップB-2: 本格的な学習の実行**
+#### **ステップ4-2: 本格的な学習の実行**
 
 準備した大規模データセットを使い、汎用的な言語能力を持つ専門家モデル「汎用言語モデル」を育成します。
 
@@ -147,7 +121,7 @@ python snn-cli.py agent solve \\
 
 **Note:** この学習はマシンスペックにより数時間以上かかる可能性があります。
 
-#### **ステップB-3: 学習済みモデルとの対話**
+#### **ステップ4-3: 学習済みモデルとの対話**
 
 上記の本格的な学習で育成した「汎用言語モデル」を呼び出して対話します。
 
@@ -155,9 +129,9 @@ python snn-cli.py agent solve \\
     \--task "汎用言語モデル" \\  
     \--prompt "SNNとは何ですか？"
 
-### **C) その他の高度な機能**
+### **ステップ5: その他の高度な機能**
 
-その他の高度な機能（Webからの自律学習、自己進化、強化学習など）については、doc/SNN開発：プロジェクト機能テスト コマンド一覧.md をご参照ください。
+その他の高度な機能（Webからの自律学習、自己進化、強化学習など）については、doc/SNN開発：プロジェクト機能テスト コマンド一覧.md をご参照ください。
 
 ## **4\. プロジェクト構造**
 
@@ -171,16 +145,23 @@ snn4/
 ├── snn\_research/         \# SNNコア研究開発コード  
 │   ├── agent/            \# 各種エージェント (自律、自己進化、生命体、強化学習)  
 │   ├── benchmark/        \# SNN vs ANN 性能評価  
-│   ├── cognitive\_architecture/ \# 高次認知機能 (プランナー、物理評価器等)  
-│   ├── core/             \# SNNモデル (BreakthroughSNN, SpikingTransformer, SpikingMamba)  
+│   ├── cognitive\_architecture/ \# 高次認知機能 (プランナー、人工脳など)  
+│   ├── communication/    \# エージェント間通信  
+│   ├── conversion/       \# ANN-SNNモデル変換  
+│   ├── core/             \# SNNモデル (BreakthroughSNN, SpikingTransformer, Mamba, HRM)  
 │   ├── data/             \# データセット定義  
 │   ├── deployment.py     \# 推論エンジン  
 │   ├── distillation/     \# 知識蒸留とモデル登録簿  
+│   ├── hardware/         \# ニューロモーフィックハードウェア関連  
+│   ├── io/               \# 感覚入力・運動出力  
 │   ├── learning\_rules/   \# 生物学的学習則 (STDPなど)  
+│   ├── metrics/          \# 評価指標  
+│   ├── models/           \# (旧) モデルアーキテクチャ  
 │   ├── rl\_env/           \# 強化学習環境  
 │   ├── tools/            \# 外部ツール (Webクローラーなど)  
 │   └── training/         \# Trainerと損失関数  
+├── tests/                \# テストコード  
 ├── snn-cli.py            \# ✨ 統合CLIツール  
 ├── train.py              \# 勾配ベース学習の実行スクリプト (CLIから呼び出される)  
-├── run\_web\_learning.py   \# ✨ Webからの自律学習実行スクリプト  
+├── run\_\*.py              \# 各機能の実行スクリプト  
 └── requirements.txt      \# 必要なライブラリ  
