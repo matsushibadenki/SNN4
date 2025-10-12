@@ -1,12 +1,11 @@
 # ファイルパス: scripts/train_classifier.py
-# (新規作成)
+# (更新)
 #
 # Title: 分類タスク用 SNN訓練スクリプト
 #
 # Description:
 # - SST-2のような分類タスクでSNNモデルを訓練し、評価するための専用スクリプト。
-# - snn_research/benchmark/tasks.py で定義されたタスク設定を読み込み、
-#   データ準備、モデル構築、訓練ループを実行する。
+# - DIコンテナを利用して、依存関係をクリーンに解決する。
 # - 訓練後、検証セットで最高の精度を達成したモデルを保存する。
 
 import argparse
@@ -14,37 +13,39 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from tqdm import tqdm
-import os
 from pathlib import Path
 import sys
 
 # プロジェクトルートをPythonパスに追加
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from snn_research.benchmark.tasks import TASK_REGISTRY
-from app.containers import get_auto_device
-from transformers import AutoTokenizer
+from app.containers import TrainingContainer # DIコンテナをインポート
 from torch.utils.data import DataLoader
 
 def main():
     parser = argparse.ArgumentParser(description="SNN Classifier Training Script")
-    parser.add_argument("--task", type=str, default="sst2", choices=TASK_REGISTRY.keys(), help="The benchmark task to train on.")
+    parser.add_argument("--task", type=str, default="sst2", help="The benchmark task to train on.")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=16, help="Training batch size.")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate for the optimizer.")
     parser.add_argument("--output_dir", type=str, default="runs/classifiers", help="Directory to save the trained model.")
     args = parser.parse_args()
 
-    device = get_auto_device()
+    # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
+    # DIコンテナを使って依存関係を解決
+    container = TrainingContainer()
+    container.config.from_yaml("configs/base_config.yaml") # 基本設定をロード
+    
+    device = container.device()
+    tokenizer = container.tokenizer()
+    task_registry = container.task_registry()
     print(f"Using device: {device}")
 
     # 1. タスクとデータの準備
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    
-    TaskClass = TASK_REGISTRY[args.task]
-    # hardware_profileは訓練に不要なため、ダミーを渡す
+    TaskClass = task_registry.get(args.task)
+    if not TaskClass:
+        raise ValueError(f"Task '{args.task}' not found in registry.")
+
     task = TaskClass(tokenizer, device, hardware_profile={}) 
     
     train_dataset, val_dataset = task.prepare_data()
@@ -53,6 +54,8 @@ def main():
 
     # 2. モデル、損失関数、オプティマイザの準備
     model = task.build_model('SNN', tokenizer.vocab_size).to(device)
+    # --- ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️ ---
+
     criterion = nn.CrossEntropyLoss()
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
