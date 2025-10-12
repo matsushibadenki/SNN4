@@ -1,10 +1,9 @@
 # ファイルパス: snn_research/core/mamba_core.py
-# (新規作成)
+# (修正)
 # Title: Spiking-MAMBAモデル コア実装
 # Description:
-# - MAMBAアーキテクチャをSNNのパラダイムに適応させた実装。
-# - 状態空間モデル(SSM)と選択的スキャンメカニズムをスパイクニューロンを用いて構築する。
-# - 長文脈処理における線形計算量を実現し、Transformerの計算量問題を解決することを目指す。
+# - 循環インポートエラーを解消するため、BaseModelとSNNLayerNormの
+#   インポート元を `snn_core` から新しい `base` モジュールに変更。
 
 import torch
 import torch.nn as nn
@@ -14,7 +13,9 @@ from omegaconf import DictConfig
 import math
 
 from .neurons import AdaptiveLIFNeuron
-from .snn_core import BaseModel, SNNLayerNorm
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from .base import BaseModel, SNNLayerNorm
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 class SpikingMambaBlock(nn.Module):
     """
