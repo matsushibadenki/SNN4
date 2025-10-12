@@ -123,71 +123,29 @@ def planner_execute(
     else:
         print("\n" + "="*20 + " ❌ TASK FAILED " + "="*20)
 
-def get_life_form_instance(model_config_path: str):
-    """DigitalLifeFormのインスタンスを、依存関係を注入して生成する。"""
-    from app.containers import AgentContainer, AppContainer
-    from snn_research.agent.digital_life_form import DigitalLifeForm
-    from snn_research.agent.autonomous_agent import AutonomousAgent
-    from snn_research.agent.reinforcement_learner_agent import ReinforcementLearnerAgent
-    from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
-    from snn_research.cognitive_architecture.intrinsic_motivation import IntrinsicMotivationSystem
-    from snn_research.cognitive_architecture.meta_cognitive_snn import MetaCognitiveSNN
-    from snn_research.cognitive_architecture.physics_evaluator import PhysicsEvaluator
-    from snn_research.cognitive_architecture.symbol_grounding import SymbolGrounding
-
-    agent_container = AgentContainer()
-    agent_container.config.from_yaml("configs/base_config.yaml")
-    agent_container.config.from_yaml(model_config_path)
-
-    app_container = AppContainer()
-    app_container.config.from_yaml("configs/base_config.yaml")
-    app_container.config.from_yaml(model_config_path)
-
-    planner = agent_container.hierarchical_planner()
-    model_registry = agent_container.model_registry()
-    memory = agent_container.memory()
-    web_crawler = agent_container.web_crawler()
-    rag_system = agent_container.rag_system()
-    langchain_adapter = app_container.langchain_adapter()
-
-    autonomous_agent = AutonomousAgent(
-        name="AutonomousAgent", planner=planner, model_registry=model_registry, 
-        memory=memory, web_crawler=web_crawler
-    )
-    rl_agent = ReinforcementLearnerAgent(input_size=4, output_size=4, device="cpu")
-    self_evolving_agent = SelfEvolvingAgent(
-        name="SelfEvolvingAgent", planner=planner, model_registry=model_registry, 
-        memory=memory, web_crawler=web_crawler,
-        model_config_path="configs/models/small.yaml",
-        training_config_path="configs/base_config.yaml"
-    )
-    
-    return DigitalLifeForm(
-        autonomous_agent=autonomous_agent,
-        rl_agent=rl_agent,
-        self_evolving_agent=self_evolving_agent,
-        motivation_system=IntrinsicMotivationSystem(),
-        meta_cognitive_snn=MetaCognitiveSNN(),
-        memory=memory,
-        physics_evaluator=PhysicsEvaluator(),
-        symbol_grounding=SymbolGrounding(rag_system),
-        langchain_adapter=langchain_adapter
-    )
 
 @life_form_app.command("start", help="意識ループを開始します。AIが自律的に思考・学習します。")
 def life_form_start(
     cycles: int = typer.Option(5, help="実行する意識サイクルの回数"),
     model_config: Path = typer.Option("configs/models/small.yaml", help="モデルアーキテクチャ設定ファイル", exists=True),
 ):
-    life_form = get_life_form_instance(str(model_config))
+    from app.containers import BrainContainer
+    container = BrainContainer()
+    container.config.from_yaml("configs/base_config.yaml")
+    container.config.from_yaml(str(model_config))
+    life_form = container.digital_life_form()
     life_form.awareness_loop(cycles=cycles)
 
 @life_form_app.command("explain-last-action", help="AI自身に、直近の行動理由を自然言語で説明させます。")
 def life_form_explain(
     model_config: Path = typer.Option("configs/models/small.yaml", help="モデルアーキテクチャ設定ファイル", exists=True),
 ):
+    from app.containers import BrainContainer
     print("🤔 AIに自身の行動理由を説明させます...")
-    life_form = get_life_form_instance(str(model_config))
+    container = BrainContainer()
+    container.config.from_yaml("configs/base_config.yaml")
+    container.config.from_yaml(str(model_config))
+    life_form = container.digital_life_form()
     explanation = life_form.explain_last_action()
     print("\n" + "="*20 + " 🤖 AIによる自己解説 " + "="*20)
     if explanation:
