@@ -7,6 +7,7 @@
 # 改善点: _search_for_urls と _summarize のダミー実装を、より具体的な実装に置き換え。
 # 修正点: mypyエラー [arg-type] を解消するため、nlargestのキーをlambda式に変更。
 # 改善点(v2): スパイクベースのメッセージを受信・処理する機能を追加。
+# 修正点(v3): SpikeEncoderDecoderのAPI変更に合わせて、メソッド呼び出しを修正。
 
 from typing import Dict, Any, Optional, List
 import asyncio
@@ -49,19 +50,18 @@ class AutonomousAgent:
         self.current_state = {"agent_name": name} # 初期状態
         self.accuracy_threshold = accuracy_threshold
         self.energy_budget = energy_budget
-        # --- ◾️◾️◾️◾️◾️↓追加↓◾️◾️◾️◾️◾️ ---
         self.spike_communicator = SpikeEncoderDecoder()
-        # --- ◾️◾️◾️◾️◾️↑追加↑◾️◾️◾️◾️◾️ ---
 
-    # --- ◾️◾️◾️◾️◾️↓メソッド追加↓◾️◾️◾️◾️◾️ ---
     def receive_and_process_spike_message(self, spike_pattern: torch.Tensor, source_agent: str):
         """
         他のエージェントから送信されたスパイクメッセージを受信し、解釈して記憶する。
         """
         print(f"📡 Agent '{self.name}' received a spike message from '{source_agent}'.")
-        decoded_message = self.spike_communicator.decode_message(spike_pattern)
+        # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
+        decoded_message = self.spike_communicator.decode_data(spike_pattern)
+        # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
 
-        if decoded_message and "error" not in decoded_message:
+        if decoded_message and isinstance(decoded_message, dict) and "error" not in decoded_message:
             print(f"  - Decoded Intent: {decoded_message.get('intent')}")
             print(f"  - Decoded Payload: {decoded_message.get('payload')}")
             
@@ -75,8 +75,8 @@ class AutonomousAgent:
                 decision_context={"reason": "Inter-agent communication received."}
             )
         else:
-            print(f"  - Failed to decode spike message. Raw text: {decoded_message.get('raw_text', '') if decoded_message else 'N/A'}")
-    # --- ◾️◾️◾️◾️◾️↑メソッド追加↑◾️◾️◾️◾️◾️ ---
+            raw_text = decoded_message.get('raw_text', str(decoded_message)) if isinstance(decoded_message, dict) else str(decoded_message)
+            print(f"  - Failed to decode spike message. Raw content: {raw_text}")
 
     def execute(self, task_description: str) -> str:
         """
@@ -196,10 +196,7 @@ class AutonomousAgent:
             sentence_scores[i] = score / len(sentence_words) if sentence_words else 0
 
         # 3. スコアの高い文を抽出
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-        # mypyエラーを解消するため、keyにlambda式を明示的に使用
         highest_scoring_indices = nlargest(num_sentences, sentence_scores, key=lambda k: sentence_scores[k])
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         summary_sentences = [sentences[i] for i in sorted(highest_scoring_indices)]
         
         return " ".join(summary_sentences)
@@ -328,3 +325,4 @@ class AutonomousAgent:
         except Exception as e:
             print(f"\n❌ Inference failed: {e}")
             self.memory.record_experience(self.current_state, "inference", {"error": str(e)}, {"external": -0.5}, [model_id] if model_id != 'N/A' else [], {})
+
