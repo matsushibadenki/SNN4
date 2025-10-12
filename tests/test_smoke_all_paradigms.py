@@ -41,7 +41,6 @@ def test_gradient_based_training(container: TrainingContainer):
     print("\n--- Testing: Gradient-based Training ---")
     container.config.training.paradigm.from_value("gradient_based")
     
-    # --- ▼ 修正 ▼ ---
     device = container.device()
     model = container.snn_model().to(device)
     optimizer = container.optimizer(params=model.parameters())
@@ -52,13 +51,12 @@ def test_gradient_based_training(container: TrainingContainer):
         scheduler=scheduler,
         device=device
     )
-    # --- ▲ 修正 ▲ ---
     
     dummy_input = torch.randint(0, 100, (2, 4))
     dummy_target = torch.randint(0, 100, (2, 4))
     dummy_loader = DataLoader(TensorDataset(dummy_input, dummy_target), batch_size=2)
     
-    trainer.train_epoch(dummy_loader) # ◾️ epoch引数を削除
+    trainer.train_epoch(dummy_loader)
     assert True
 
 
@@ -68,7 +66,6 @@ def test_distillation_training(container: TrainingContainer):
     container.config.training.paradigm.from_value("gradient_based")
     container.config.training.gradient_based.type.from_value("distillation")
 
-    # --- ▼ 修正 ▼ ---
     device = container.device()
     model = container.snn_model().to(device)
     optimizer = container.optimizer(params=model.parameters())
@@ -79,7 +76,6 @@ def test_distillation_training(container: TrainingContainer):
         scheduler=scheduler,
         device=device
     )
-    # --- ▲ 修正 ▲ ---
 
     vocab_size = container.tokenizer().vocab_size
     dummy_input = torch.randint(0, vocab_size, (2, 4))
@@ -98,7 +94,6 @@ def test_physics_informed_training(container: TrainingContainer):
     print("\n--- Testing: Physics-informed Training ---")
     container.config.training.paradigm.from_value("physics_informed")
 
-    # --- ▼ 修正 ▼ ---
     device = container.device()
     model = container.snn_model().to(device)
     optimizer = container.pi_optimizer(params=model.parameters())
@@ -109,13 +104,12 @@ def test_physics_informed_training(container: TrainingContainer):
         scheduler=scheduler,
         device=device
     )
-    # --- ▲ 修正 ▲ ---
     
     dummy_input = torch.randint(0, 100, (2, 4))
     dummy_target = torch.randint(0, 100, (2, 4))
     dummy_loader = DataLoader(TensorDataset(dummy_input, dummy_target), batch_size=2)
 
-    trainer.train_epoch(dummy_loader) # ◾️ epoch引数を削除
+    trainer.train_epoch(dummy_loader)
     assert True
 
 
