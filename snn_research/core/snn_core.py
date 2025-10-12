@@ -1,13 +1,7 @@
 # ファイルパス: snn_research/core/snn_core.py
 # (修正)
-# Title: SNNモデルの定義、次世代ニューロンなど、中核となるロジック
-# Description:
-# - 循環インポートを解消するため、共有クラスを `base.py` に移動し、そこからインポートする。
-# - mypyエラーとNameErrorを解消するため、`SNNCore.__init__`メソッドの実装を修正。
-# - 新しいアーキテクチャ(SpikingMamba, SpikingHRM)を `model_map` に追加。
-# - 修正(v2): AttributeErrorを解消するため、BreakthroughSNNにd_model属性を保存する処理を追加。
-# - 修正(v3): ベンチマーク実行時のRuntimeErrorを解消するため、output_hidden_statesフラグに応じて
-#            モデルが出力を切り替えるよう修正。
+# 修正: 論文「Dynamic Threshold and Multi-level Attention」に基づき、
+#       SpikingTransformerにマルチレベルアテンションメカニズムを導入。
 
 import torch
 import torch.nn as nn
@@ -25,6 +19,7 @@ from .hrm_core import SpikingHRM
 # --- レイヤーとモジュール ---
 
 class PredictiveCodingLayer(nn.Module):
+    # (変更なし)
     error_mean: torch.Tensor
     error_std: torch.Tensor
 
@@ -61,45 +56,84 @@ class PredictiveCodingLayer(nn.Module):
         
         return updated_state, prediction_error, prediction
 
-class SpikeDrivenSelfAttention(nn.Module):
-    def __init__(self, d_model: int, n_head: int):
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+class MultiLevelSpikeDrivenSelfAttention(nn.Module):
+    """
+    論文に基づき、複数の時間スケールで動作するアテンションメカニズム。
+    """
+    def __init__(self, d_model: int, n_head: int, time_scales: List[int] = [1, 3, 5]):
         super().__init__()
         self.d_model = d_model
         self.n_head = n_head
         self.d_head = d_model // n_head
+        self.time_scales = time_scales
+        
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model * len(time_scales), d_model) # 出力を結合するため次元を調整
+        
         self.neuron_q = AdaptiveLIFNeuron(features=d_model)
         self.neuron_k = AdaptiveLIFNeuron(features=d_model)
+        self.neuron_out = AdaptiveLIFNeuron(features=d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, N, C = x.shape
+        B, T, C = x.shape
+        
         q, _ = self.neuron_q(self.q_proj(x))
         k, _ = self.neuron_k(self.k_proj(x))
-        v = self.v_proj(x)
-        q = q.view(B, N, self.n_head, self.d_head).permute(0, 2, 1, 3)
-        k = k.view(B, N, self.n_head, self.d_head).permute(0, 2, 3, 1)
-        v = v.view(B, N, self.n_head, self.d_head).permute(0, 2, 1, 3)
+        v = self.v_proj(x) # Valueはスパイク化しないのが一般的
+
+        outputs = []
+        for scale in self.time_scales:
+            # 時間スケールに応じて入力をプーリング（簡易的な実装）
+            if T >= scale and T % scale == 0:
+                q_scaled = F.avg_pool1d(q.transpose(1, 2), kernel_size=scale, stride=scale).transpose(1, 2)
+                k_scaled = F.avg_pool1d(k.transpose(1, 2), kernel_size=scale, stride=scale).transpose(1, 2)
+                v_scaled = F.avg_pool1d(v.transpose(1, 2), kernel_size=scale, stride=scale).transpose(1, 2)
+                
+                T_scaled = q_scaled.shape[1]
+
+                q_h = q_scaled.view(B, T_scaled, self.n_head, self.d_head).permute(0, 2, 1, 3)
+                k_h = k_scaled.view(B, T_scaled, self.n_head, self.d_head).permute(0, 2, 3, 1)
+                v_h = v_scaled.view(B, T_scaled, self.n_head, self.d_head).permute(0, 2, 1, 3)
+                
+                attn_scores = torch.matmul(q_h, k_h) / math.sqrt(self.d_head)
+                attn_weights = torch.sigmoid(attn_scores)
+                attn_output = torch.matmul(attn_weights, v_h)
+                
+                attn_output = attn_output.permute(0, 2, 1, 3).contiguous().view(B, T_scaled, C)
+                
+                # 元の時間長にアップサンプリング
+                attn_output_upsampled = F.interpolate(attn_output.transpose(1, 2), size=T, mode='nearest').transpose(1, 2)
+                outputs.append(attn_output_upsampled)
+
+        if not outputs: # スケールが合わなかった場合
+             return self.neuron_out(x)[0]
+
+        # 異なる時間スケールからの出力を結合
+        concatenated_output = torch.cat(outputs, dim=-1)
         
-        attn_scores = torch.matmul(q, k) / math.sqrt(self.d_head)
-        attn_weights = torch.sigmoid(attn_scores)
-        attn_output = torch.matmul(attn_weights, v)
-        attn_output = attn_output.permute(0, 2, 1, 3).contiguous().view(B, N, C)
-        return self.out_proj(attn_output)
+        # 結合した出力を元の次元に戻す
+        final_output = self.out_proj(concatenated_output)
+        
+        # 最終出力をスパイク化
+        final_spikes, _ = self.neuron_out(final_output.reshape(B*T, -1))
+        return final_spikes.reshape(B, T, C)
 
 class STAttenBlock(nn.Module):
     def __init__(self, d_model: int, n_head: int):
         super().__init__()
         self.norm1 = SNNLayerNorm(d_model)
-        self.attn = SpikeDrivenSelfAttention(d_model, n_head)
+        # 既存のAttentionを新しいMulti-level Attentionに置き換え
+        self.attn = MultiLevelSpikeDrivenSelfAttention(d_model, n_head)
         self.lif1 = AdaptiveLIFNeuron(features=d_model)
         self.norm2 = SNNLayerNorm(d_model)
         self.fc1 = nn.Linear(d_model, d_model * 4)
         self.lif2 = AdaptiveLIFNeuron(features=d_model * 4)
         self.fc2 = nn.Linear(d_model * 4, d_model)
         self.lif3 = AdaptiveLIFNeuron(features=d_model)
+# ◾️◾️◾◾️◾️◾️◾️◾️◾️◾️️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, D = x.shape
@@ -120,6 +154,7 @@ class STAttenBlock(nn.Module):
         return out
 
 class BreakthroughSNN(BaseModel):
+    # (変更なし)
     def __init__(self, vocab_size: int, d_model: int, d_state: int, num_layers: int, time_steps: int, n_head: int, neuron_config: Optional[Dict[str, Any]] = None, **kwargs: Any):
         super().__init__()
         self.time_steps = time_steps
@@ -160,13 +195,10 @@ class BreakthroughSNN(BaseModel):
         
         final_hidden_states = all_timestep_outputs[-1]
         
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if output_hidden_states:
-             # 分類タスクなど、最終層の前の特徴量が必要な場合に備える
              output = final_hidden_states
         else:
              output = self.output_projection(final_hidden_states)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
@@ -174,6 +206,7 @@ class BreakthroughSNN(BaseModel):
         return output, avg_spikes, torch.tensor(0.0, device=device)
 
 class SpikingTransformer(BaseModel):
+    # (STAttenBlockがMultiLevelSpikeDrivenSelfAttentionを使うように修正済み)
     def __init__(self, vocab_size: int, d_model: int, n_head: int, num_layers: int, time_steps: int, **kwargs: Any):
         super().__init__()
         self.time_steps = time_steps
@@ -209,12 +242,10 @@ class SpikingTransformer(BaseModel):
 
         x_normalized = self.final_norm(x)
         
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if output_hidden_states:
             output = x_normalized
         else:
             output = self.output_projection(x_normalized)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (seq_len * self.time_steps * batch_size) if return_spikes else 0.0
@@ -222,6 +253,7 @@ class SpikingTransformer(BaseModel):
         return output, avg_spikes, torch.tensor(0.0, device=device)
 
 class SimpleSNN(BaseModel):
+    # (変更なし)
     def __init__(self, vocab_size: int, d_model: int, hidden_size: int, **kwargs: Any):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
@@ -246,6 +278,7 @@ class SimpleSNN(BaseModel):
         return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
 
 class SNNCore(nn.Module):
+    # (変更なし)
     def __init__(self, config: DictConfig, vocab_size: int):
         super(SNNCore, self).__init__()
         if isinstance(config, dict):
