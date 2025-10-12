@@ -2,6 +2,8 @@
 # (更新)
 # 改善点: 新しいHybridPerceptionCortexのperceive_and_learnメソッドを
 #          呼び出すように修正。
+# 改善点(v2): ROADMAPフェーズ2に基づき、Amygdalaからの情動出力を
+#            BasalGangliaの行動選択に伝達するよう修正。
 
 from typing import Dict, Any, List
 import asyncio
@@ -11,7 +13,7 @@ from snn_research.io.sensory_receptor import SensoryReceptor
 from snn_research.io.spike_encoder import SpikeEncoder
 from snn_research.io.actuator import Actuator
 # Core cognitive modules
-from .hybrid_perception_cortex import HybridPerceptionCortex
+from .hybrid_perception_cortex import HybridPerceptionCortex # 型ヒントを更新
 from .prefrontal_cortex import PrefrontalCortex
 from .hierarchical_planner import HierarchicalPlanner
 # Memory systems
@@ -77,10 +79,8 @@ class ArtificialBrain:
         sensory_info = self.receptor.receive(raw_input)
         spike_pattern = self.encoder.encode(sensory_info, duration=50)
 
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         # 知覚と同時に学習も行うメソッドを呼び出す
         perception_result = self.perception.perceive_and_learn(spike_pattern)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         episode = {'type': 'perception', 'content': perception_result, 'source_input': raw_input}
         self.hippocampus.store_episode(episode)
@@ -95,7 +95,10 @@ class ArtificialBrain:
         plan = asyncio.run(self.planner.create_plan(goal))
         action_candidates = self._convert_plan_to_candidates(plan)
         
-        selected_action = self.basal_ganglia.select_action(action_candidates)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # 行動選択の際に、現在の情動状態を伝達する
+        selected_action = self.basal_ganglia.select_action(action_candidates, emotion_context=emotion)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
         if selected_action:
             motor_commands = self.cerebellum.refine_action_plan(selected_action)
@@ -114,3 +117,5 @@ class ArtificialBrain:
                 'duration': 1.0 
             })
         return candidates
+
+}
