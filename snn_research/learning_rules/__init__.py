@@ -1,6 +1,7 @@
-# snn_research/learning_rules/__init__.py
-# Title: 学習ルール・ファクトリー
-# Description: 設定に応じて適切な学習ルールオブジェクトを生成します。
+# ファイルパス: snn_research/learning_rules/__init__.py
+# (修正)
+# 修正: CausalTraceCreditAssignmentの生成時に、STDPのパラメータも正しく結合して渡すように修正。
+#       これにより、`TypeError: CausalTraceCreditAssignment.__init__() missing ... arguments` エラーを解消する。
 
 from typing import Dict, Any
 from .base_rule import BioLearningRule
@@ -15,6 +16,14 @@ def get_bio_learning_rule(name: str, params: Dict[str, Any]) -> BioLearningRule:
     elif name == "REWARD_MODULATED_STDP":
         return RewardModulatedSTDP(**params['reward_modulated_stdp'])
     elif name == "CAUSAL_TRACE":
-        return CausalTraceCreditAssignment(**params['causal_trace'])
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # STDPのパラメータとCausalTrace固有のパラメータを結合して渡す
+        stdp_params = params.get('stdp', {})
+        causal_params = params.get('causal_trace', {})
+        combined_params = {**stdp_params, **causal_params}
+        return CausalTraceCreditAssignment(**combined_params)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     else:
-        raise ValueError(f"Unknown learning rule: {name}")
+        raise ValueError(f"未知の学習ルール名です: {name}")
+
+__all__ = ["BioLearningRule", "STDP", "RewardModulatedSTDP", "CausalTraceCreditAssignment", "get_bio_learning_rule"]
