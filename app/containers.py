@@ -110,14 +110,20 @@ class TrainingContainer(containers.DeclarativeContainer):
     standard_loss = providers.Factory(CombinedLoss, tokenizer=tokenizer, **(config.training.gradient_based.loss.as_dict() or {}))
     distillation_loss = providers.Factory(DistillationLoss, tokenizer=tokenizer, **(config.training.gradient_based.distillation.loss.as_dict() or {}))
     physics_informed_loss = providers.Factory(PhysicsInformedLoss, tokenizer=tokenizer, **(config.training.physics_informed.loss.as_dict() or {}))
+    self_supervised_loss = providers.Factory(SelfSupervisedLoss, tokenizer=tokenizer, **(config.training.self_supervised.loss.as_dict() or {}))
+    probabilistic_ensemble_loss = providers.Factory(ProbabilisticEnsembleLoss, tokenizer=tokenizer, **(config.training.probabilistic_ensemble.loss.as_dict() or {}))
 
     # === Optimizers ===
     grad_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate)
     pi_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.physics_informed.learning_rate)
-
+    ssl_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.self_supervised.learning_rate)
+    pe_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.probabilistic_ensemble.learning_rate)
+    
     # === Schedulers ===
     grad_scheduler = providers.Factory(_create_scheduler, optimizer=grad_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs)
     pi_scheduler = providers.Factory(_create_scheduler, optimizer=pi_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs)
+    ssl_scheduler = providers.Factory(_create_scheduler, optimizer=ssl_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.self_supervised.warmup_epochs)
+    pe_scheduler = providers.Factory(_create_scheduler, optimizer=pe_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.probabilistic_ensemble.warmup_epochs)
 
     # === Trainers ===
     standard_trainer = providers.Factory(
@@ -135,6 +141,18 @@ class TrainingContainer(containers.DeclarativeContainer):
     physics_informed_trainer = providers.Factory(
         PhysicsInformedTrainer, model=snn_model, optimizer=pi_optimizer, criterion=physics_informed_loss, scheduler=pi_scheduler, device=device,
         grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp,
+        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
+    )
+    
+    self_supervised_trainer = providers.Factory(
+        SelfSupervisedTrainer, model=snn_model, optimizer=ssl_optimizer, criterion=self_supervised_loss, scheduler=ssl_scheduler, device=device,
+        grad_clip_norm=config.training.self_supervised.grad_clip_norm, rank=-1, use_amp=config.training.self_supervised.use_amp,
+        log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
+    )
+    
+    probabilistic_ensemble_trainer = providers.Factory(
+        ProbabilisticEnsembleTrainer, model=snn_model, optimizer=pe_optimizer, criterion=probabilistic_ensemble_loss, scheduler=pe_scheduler, device=device,
+        grad_clip_norm=config.training.probabilistic_ensemble.grad_clip_norm, rank=-1, use_amp=config.training.probabilistic_ensemble.use_amp,
         log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
@@ -159,7 +177,6 @@ class TrainingContainer(containers.DeclarativeContainer):
         device=device
     )
     
-    # ... (rest of container definitions)
     rl_environment = providers.Factory(GridWorldEnv, device=device)
     rl_agent = providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device)
     bio_rl_trainer = providers.Factory(BioRLTrainer, agent=rl_agent, env=rl_environment)
