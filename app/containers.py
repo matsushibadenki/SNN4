@@ -64,9 +64,9 @@ from snn_research.cognitive_architecture.cerebellum import Cerebellum
 from snn_research.cognitive_architecture.motor_cortex import MotorCortex
 from snn_research.cognitive_architecture.hybrid_perception_cortex import HybridPerceptionCortex
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-from snn_research.benchmark import TASK_REGISTRY
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from snn_research.benchmark.tasks import TASK_REGISTRY
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 if TYPE_CHECKING:
     from .adapters.snn_langchain_adapter import SNNLangChainAdapter
@@ -109,10 +109,8 @@ class TrainingContainer(containers.DeclarativeContainer):
     """学習に関連するオブジェクトの依存関係を管理するコンテナ。"""
     config = providers.Configuration()
 
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     # --- Benchmark Task Registry ---
     task_registry = providers.Object(TASK_REGISTRY)
-    # ◾️◾️◾️◾️◾◾️◾️◾️◾️◾️◾️️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     # --- 共通ツール ---
     device = providers.Factory(get_auto_device)
