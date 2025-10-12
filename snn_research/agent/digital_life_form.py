@@ -1,10 +1,15 @@
-# ファイルパス: matsushibadenki/snn4/snn4-190ede29139f560c90968675a68ccf65069201c/snn_research/agent/digital_life_form.py
+# ファイルパス: snn_research/agent/digital_life_form.py
+# (更新)
 #
-# DigitalLifeForm オーケストレーター
-# (省略)
+# Title: DigitalLifeForm オーケストレーター
+#
 # 修正点 (v9):
 # - 循環インポートエラーを解消するため、SNNLangChainAdapterのトップレベルインポートを削除し、
 #   TYPE_CHECKINGとForward Reference（文字列による型指定）を使用するように修正。
+#
+# 実装更新:
+# - _execute_actionメソッドのダミー実装を、実際のエージェント機能（Web学習、自己進化など）を
+#   呼び出す具体的なロジックに置き換えました。
 
 import time
 import logging
@@ -25,14 +30,12 @@ from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
 from snn_research.cognitive_architecture.hierarchical_planner import HierarchicalPlanner
 from snn_research.distillation.model_registry import DistributedModelRegistry
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 # 循環インポートを避けるため、トップレベルでのインポートを削除
 # from app.adapters.snn_langchain_adapter import SNNLangChainAdapter
 
 # 型チェック時のみインポートを実行する
 if TYPE_CHECKING:
     from app.adapters.snn_langchain_adapter import SNNLangChainAdapter
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -51,10 +54,8 @@ class DigitalLifeForm:
         memory: Memory,
         physics_evaluator: PhysicsEvaluator,
         symbol_grounding: SymbolGrounding,
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         # Forward Reference (文字列) を使って型ヒントを記述
         langchain_adapter: "SNNLangChainAdapter"
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     ):
         self.autonomous_agent = autonomous_agent
         self.rl_agent = rl_agent
@@ -181,6 +182,9 @@ class DigitalLifeForm:
         return chosen_action
 
     def _execute_action(self, action: str) -> tuple[Dict[str, Any], float, List[str]]:
+        """
+        選択された行動に対応するエージェントの機能を実際に呼び出す。
+        """
         try:
             if action == "publish_successful_skill":
                 if isinstance(self.autonomous_agent.model_registry, DistributedModelRegistry):
@@ -193,6 +197,7 @@ class DigitalLifeForm:
 
             elif action == "download_skill_from_community":
                 if isinstance(self.autonomous_agent.model_registry, DistributedModelRegistry):
+                    # 知識ギャップの原因となったタスクを特定（ここでは最後のタスクを使用）
                     task_needed = self.state.get("last_task", "text_summarization")
                     downloaded_skill = asyncio.run(self.autonomous_agent.model_registry.download_skill(task_needed, "runs/downloaded_skills"))
                     return {"status": "success" if downloaded_skill else "failure", "info": f"Downloaded skill for {task_needed}"}, 1.0, ["model_registry"]
@@ -200,23 +205,40 @@ class DigitalLifeForm:
 
             elif action == "acquire_new_knowledge":
                 self.state["last_task"] = "web_research"
-                result_str = self.autonomous_agent.learn_from_web("latest SNN research trends")
-                return {"status": "success", "info": result_str, "accuracy": 0.96}, 0.8, ["web_crawler"]
+                # 自律エージェントのWeb学習機能を呼び出す
+                result_str = self.autonomous_agent.learn_from_web("latest trends in neuromorphic computing")
+                return {"status": "success", "info": result_str}, 0.8, ["web_crawler", "summarizer"]
+                
             elif action == "evolve_architecture":
                 self.state["last_task"] = "self_evolution"
+                # 自己進化エージェントの進化機能を呼び出す
                 result_str = self.self_evolving_agent.evolve()
-                return {"status": "success", "info": result_str, "accuracy": 0.97}, 0.9, ["self_evolver"]
+                return {"status": "success", "info": result_str}, 0.9, ["self_evolver"]
+                
             elif action == "explore_new_task_with_rl":
                 self.state["last_task"] = "rl_exploration"
-                return {"status": "success", "info": "Exploration finished.", "accuracy": 0.92}, 0.7, ["rl_agent_explorer"]
+                # 強化学習エージェントで簡単な学習を実行（ダミー）
+                # 実際の環境では、ここで新しいタスクの学習が開始される
+                state = self.rl_agent.encoder.encode_text_to_spikes("new task").mean(dim=1)
+                action_idx = self.rl_agent.get_action(state)
+                self.rl_agent.learn(reward=0.7) # 新しいタスクを発見したことに対する正の報酬
+                return {"status": "success", "info": f"Explored new RL task, took action {action_idx}"}, 0.7, ["rl_agent"]
+                
             elif action == "practice_skill_with_rl":
                 self.state["last_task"] = "rl_practice"
-                return {"status": "success", "info": "Practice finished.", "accuracy": 0.98}, 0.5, ["rl_agent_practicer"]
+                # 既存のスキルを強化学習で練習（ダミー）
+                state = self.rl_agent.encoder.encode_text_to_spikes("practice").mean(dim=1)
+                action_idx = self.rl_agent.get_action(state)
+                self.rl_agent.learn(reward=0.5) # 練習したことに対する報酬
+                return {"status": "success", "info": f"Practiced RL skill, took action {action_idx}"}, 0.5, ["rl_agent"]
+                
             elif action == "plan_and_execute":
-                task = "Summarize the latest trends in SNN and analyze the sentiment."
+                task = "Research the concept of 'Predictive Coding' and summarize its main ideas."
                 self.state["last_task"] = "planning"
+                # 自律エージェントのプラン実行機能を呼び出す
                 result_str = self.autonomous_agent.execute(task)
-                return {"status": "success", "info": result_str, "accuracy": 0.95}, 0.8, ["planner", "summarizer_snn", "sentiment_snn"]
+                return {"status": "success", "info": result_str}, 0.8, ["planner", "web_crawler", "summarizer_snn"]
+                
             else:
                 return {"status": "failed", "info": "Unknown action"}, 0.0, []
         except Exception as e:
