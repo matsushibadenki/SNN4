@@ -1,6 +1,7 @@
 # matsushibadenki/snn4/snn_research/core/snn_core.py
 # SNNモデルの定義、次世代ニューロンなど、中核となるロジックを集約したライブラリ
 # 修正点: AdaptiveLIFNeuronに不要なキーワード引数('type')が渡されるエラーを修正。
+# 改善点: 新しいアーキテクチャとして SpikingMamba を追加。
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,10 @@ from omegaconf import DictConfig, OmegaConf
 
 # 外部ファイルからニューロンをインポート
 from .neurons import AdaptiveLIFNeuron, IzhikevichNeuron
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+# 新しいMAMBAモデルをインポート
+from .mamba_core import SpikingMamba
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 # --- レイヤーとモジュール ---
 
@@ -156,17 +161,14 @@ class BreakthroughSNN(BaseModel):
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.input_encoder = nn.Linear(d_model, d_model)
 
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-        # AdaptiveLIFNeuronに渡すパラメータをフィルタリングする
         neuron_params = neuron_config.copy() if neuron_config is not None else {}
-        neuron_params.pop('type', None) # 'type'キーはコンストラクタに不要なため削除
+        neuron_params.pop('type', None) 
         neuron_params.pop('num_branches', None)
         neuron_params.pop('branch_features', None)
 
         self.pc_layers = nn.ModuleList(
             [PredictiveCodingLayer(d_model, d_state, AdaptiveLIFNeuron, neuron_params) for _ in range(num_layers)]
         )
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
         self.output_projection = nn.Linear(d_state * num_layers, vocab_size)
         self._init_weights()
@@ -280,11 +282,14 @@ class SNNCore(nn.Module):
         params.pop('path', None)
         neuron_config = params.pop('neuron', {})
 
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         model_map = {
             "predictive_coding": BreakthroughSNN,
             "spiking_transformer": SpikingTransformer,
+            "spiking_mamba": SpikingMamba, # MAMBAを追加
             "simple": SimpleSNN
         }
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
         self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
