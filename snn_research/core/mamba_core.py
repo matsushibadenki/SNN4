@@ -106,4 +106,3 @@ class SpikingMamba(BaseModel):
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
         mem = torch.tensor(0.0, device=input_ids.device) 
         return logits, avg_spikes, mem
-
