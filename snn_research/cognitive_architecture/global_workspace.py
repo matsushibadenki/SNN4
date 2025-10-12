@@ -9,6 +9,7 @@
 # - 改善点 (v2): 設計図に基づき、注意機構(AttentionHub)を統合。
 #              各モジュールからの誤差信号を競合させ、勝者となった情報を
 #              システム全体にブロードキャストする「意識」の仕組みを実装。
+# 修正点(v3): SpikeEncoderDecoderのAPI変更に伴い、メソッド呼び出しを修正。
 
 from typing import Dict, Any, List, Callable, Optional, Tuple
 import random
@@ -86,13 +87,10 @@ class GlobalWorkspace:
         誤差信号の場合は、注意機構に通知する。
         """
         print(f"[GlobalWorkspace] '{source}' から情報を受信...")
+        # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
         # データをスパイクパターンにエンコード
-        if isinstance(data, dict):
-            spiked_data = self.encoder_decoder.encode_dict_to_spikes(data)
-        elif isinstance(data, str):
-            spiked_data = self.encoder_decoder.encode_text_to_spikes(data)
-        else:
-            spiked_data = self.encoder_decoder.encode_text_to_spikes(str(data))
+        spiked_data = self.encoder_decoder.encode_data(data)
+        # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
             
         self.blackboard[source] = {"data": spiked_data, "is_error": is_error_signal, "magnitude": error_magnitude}
 
@@ -151,12 +149,10 @@ class GlobalWorkspace:
         
         spiked_data = source_info["data"]
         
-        # まず辞書としてデコードを試みる
-        decoded_data = self.encoder_decoder.decode_spikes_to_dict(spiked_data)
-        if isinstance(decoded_data, dict) and "error" in decoded_data:
-            # 辞書へのデコードが失敗した場合、単純なテキストとしてデコードする
-            return self.encoder_decoder.decode_spikes_to_text(spiked_data)
-        return decoded_data
+        # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
+        # 汎用的なデコードメソッドを使用
+        return self.encoder_decoder.decode_data(spiked_data)
+        # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
 
     def get_full_context(self) -> Dict[str, Any]:
         """
