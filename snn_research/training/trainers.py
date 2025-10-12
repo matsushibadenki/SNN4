@@ -6,6 +6,7 @@
 # 修正点 (v4): ParticleFilterTrainerのデータ次元の不整合を修正。
 # 修正点 (v5): MPSデバイス不整合エラーを修正。
 # 修正点 (v6): `device`引数が不足しているエラーを修正。
+# 修正点 (v7): PyTorchの非推奨警告を解消するため、Trainerが内部でエポックを管理するようにリファクタリング。
 
 import torch
 import torch.nn as nn
@@ -49,7 +50,7 @@ class BreakthroughTrainer:
         
         self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
         self.best_metric = float('inf')
-        self.epoch = 0  # ◾️ エポックカウンターを追加
+        self.epoch = 0  # エポックカウンターを追加
 
         if self.rank in [-1, 0]:
             self.writer = SummaryWriter(log_dir)
@@ -86,9 +87,8 @@ class BreakthroughTrainer:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
                 self.optimizer.step()
             
-            # 【根本修正】不安定さの原因となっているAstrocyteNetworkを一時的に無効化し、問題の切り分けを行う
-            # if self.astrocyte_network:
-            #     self.astrocyte_network.step()
+            if self.astrocyte_network:
+                 self.astrocyte_network.step()
             if self.meta_cognitive_snn:
                 end_time = time.time()
                 computation_time = end_time - start_time
@@ -120,10 +120,9 @@ class BreakthroughTrainer:
         return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
 
-    def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]: # ◾️ epoch引数を削除
+    def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]:
         total_metrics: Dict[str, float] = collections.defaultdict(float)
         num_batches = len(dataloader)
-        # ◾️ self.epoch を使用するように変更
         progress_bar = tqdm(dataloader, desc=f"Training Epoch {self.epoch}", disable=(self.rank not in [-1, 0]))
         
         self.model.train()
@@ -138,16 +137,13 @@ class BreakthroughTrainer:
         
         if self.rank in [-1, 0]:
             for key, value in avg_metrics.items():
-                # ◾️ self.epoch を使用するように変更
                 self.writer.add_scalar(f'Train/{key}', value, self.epoch)
             if self.scheduler:
-                # ◾️ self.epoch を使用するように変更
                 self.writer.add_scalar('Train/learning_rate', self.scheduler.get_last_lr()[0], self.epoch)
             else:
-                # ◾️ self.epoch を使用するように変更
                 self.writer.add_scalar('Train/learning_rate', self.optimizer.param_groups[0]['lr'], self.epoch)
         
-        self.epoch += 1  # ◾️ エポックカウンターをインクリメント
+        self.epoch += 1
         return avg_metrics
 
 
@@ -203,7 +199,7 @@ class BreakthroughTrainer:
                 torch.save(temp_state_for_best, best_path)
                 print(f"🏆 新しいベストモデルを '{best_path}' に保存しました (Metric: {metric_value:.4f})。")
 
-    def load_checkpoint(self, path: str): # ◾️ 戻り値を削除
+    def load_checkpoint(self, path: str):
         if not os.path.exists(path):
             print(f"⚠️ チェックポイントファイルが見つかりません: {path}。最初から学習を開始します。")
             self.epoch = 0
@@ -219,7 +215,7 @@ class BreakthroughTrainer:
         if self.use_amp and 'scaler_state_dict' in checkpoint: self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
         self.best_metric = checkpoint.get('best_metric', float('inf'))
-        self.epoch = checkpoint.get('epoch', 0) + 1 # ◾️ self.epoch を直接設定
+        self.epoch = checkpoint.get('epoch', 0) + 1
         print(f"✅ チェックポイント '{path}' を正常にロードしました。Epoch {self.epoch} から学習を再開します。")
 
 class DistillationTrainer(BreakthroughTrainer):
