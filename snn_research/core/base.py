@@ -49,3 +49,4 @@ class BaseModel(nn.Module):
         for module in self.modules():
             if isinstance(module, (AdaptiveLIFNeuron, IzhikevichNeuron)):
                 module.reset()
+
