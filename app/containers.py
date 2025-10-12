@@ -1,8 +1,7 @@
 # ファイルパス: app/containers.py
-# (修正 v6 - 最終修正)
-# 修正: pytest収集時に発生する `AttributeError: type object 'dependency_injector.providers.Self' has no attribute 'optimizer'` を
-#       完全に解消するため、各Trainerプロバイダの定義を修正。
-#       SchedulerがOptimizerを正しく参照できるように、依存関係の注入方法を修正した。
+# (修正 v7 - 最終修正)
+# 修正: pytest収集時に発生する `AttributeError: module 'dependency_injector.providers' has no attribute 'factory'` を
+#       完全に解消するため、デコレータを `@providers.factory` から `@providers.Factory` に修正。
 
 import torch
 from dependency_injector import containers, providers
@@ -111,10 +110,10 @@ class TrainingContainer(containers.DeclarativeContainer):
     probabilistic_ensemble_loss = providers.Factory(ProbabilisticEnsembleLoss, tokenizer=tokenizer, **(config.training.probabilistic_ensemble.loss.as_dict() or {}))
 
     # === Trainers (with dedicated optimizers and schedulers) ===
-    @providers.factory
+    @providers.Factory
     def standard_trainer(self):
         optimizer = AdamW(self.snn_model().parameters(), lr=self.config.training.gradient_based.learning_rate())
-        scheduler = _create_scheduler(optimizer, self.config.training.epochs(), self.config.training.gradient_based.warmup_epochs())
+        scheduler = _create_scheduler(optimizer, self.config.training.epochs(), self.config.training.gradient_based.warmup_epochs()) if self.config.training.gradient_based.use_scheduler() else None
         return BreakthroughTrainer(
             model=self.snn_model(),
             optimizer=optimizer,
@@ -129,10 +128,10 @@ class TrainingContainer(containers.DeclarativeContainer):
             meta_cognitive_snn=self.meta_cognitive_snn()
         )
 
-    @providers.factory
+    @providers.Factory
     def distillation_trainer(self):
         optimizer = AdamW(self.snn_model().parameters(), lr=self.config.training.gradient_based.learning_rate())
-        scheduler = _create_scheduler(optimizer, self.config.training.epochs(), self.config.training.gradient_based.warmup_epochs())
+        scheduler = _create_scheduler(optimizer, self.config.training.epochs(), self.config.training.gradient_based.warmup_epochs()) if self.config.training.gradient_based.use_scheduler() else None
         return DistillationTrainer(
             model=self.snn_model(),
             optimizer=optimizer,
@@ -147,10 +146,10 @@ class TrainingContainer(containers.DeclarativeContainer):
             meta_cognitive_snn=self.meta_cognitive_snn()
         )
 
-    @providers.factory
+    @providers.Factory
     def physics_informed_trainer(self):
         optimizer = AdamW(self.snn_model().parameters(), lr=self.config.training.physics_informed.learning_rate())
-        scheduler = _create_scheduler(optimizer, self.config.training.epochs(), self.config.training.physics_informed.warmup_epochs())
+        scheduler = _create_scheduler(optimizer, self.config.training.epochs(), self.config.training.physics_informed.warmup_epochs()) if self.config.training.physics_informed.use_scheduler() else None
         return PhysicsInformedTrainer(
             model=self.snn_model(),
             optimizer=optimizer,
@@ -172,7 +171,7 @@ class TrainingContainer(containers.DeclarativeContainer):
         REWARD_MODULATED_STDP=providers.Factory(RewardModulatedSTDP, **(config.training.biologically_plausible.reward_modulated_stdp.as_dict() or {})),
         CAUSAL_TRACE=providers.Factory(CausalTraceCreditAssignment, **(config.training.biologically_plausible.causal_trace.as_dict() or {}))
     )
-    bio_snn_model = providers.Factory(BioSNN, layer_sizes=[10, 50, 2], neuron_params=config.training.biologically_plausible.neuron, learning_rule=bio_learning_rule, sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification)
+    bio_snn_model = providers.Factory(BioSNN, layer_sizes=[10, 50, 2], neuron_params=config.training.biologically_plausible.neuron.as_dict(), learning_rule=bio_learning_rule, sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification.as_dict())
     rl_environment = providers.Factory(GridWorldEnv, device=device)
     rl_agent = providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device)
     bio_rl_trainer = providers.Factory(BioRLTrainer, agent=rl_agent, env=rl_environment)
@@ -218,7 +217,7 @@ class BrainContainer(containers.DeclarativeContainer):
     sensory_receptor = providers.Singleton(SensoryReceptor)
     spike_encoder = providers.Singleton(SpikeEncoder, num_neurons=num_neurons)
     actuator = providers.Singleton(Actuator, actuator_name="voice_synthesizer")
-    perception_cortex = providers.Singleton(HybridPerceptionCortex, num_neurons=num_neurons, feature_dim=64, som_map_size=providers.List(8, 8), stdp_params=config.training.biologically_plausible.stdp)
+    perception_cortex = providers.Singleton(HybridPerceptionCortex, num_neurons=num_neurons, feature_dim=64, som_map_size=(8, 8), stdp_params=config.training.biologically_plausible.stdp.as_dict())
     prefrontal_cortex = providers.Singleton(PrefrontalCortex)
     hierarchical_planner = agent_container.hierarchical_planner
     hippocampus = providers.Singleton(Hippocampus, capacity=50)
