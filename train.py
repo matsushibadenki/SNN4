@@ -8,6 +8,7 @@
 # - BugFix: 'physics_informed'や'self_supervised'パラダイムでもモデルが保存されるように修正。
 # - 改善点 (v2): 新しい生物学的学習パラダイム（適応的因果スパース化、パーティクルフィルタ）に対応。
 # - 修正点 (v3): mypyエラー [attr-defined], [call-arg] を解消。
+# - 改善点 (v4): 継続学習(EWC)のためのFisher行列計算処理を追加。
 
 import argparse
 import os
@@ -47,13 +48,11 @@ def train(
     if not paradigm.startswith("bio-"):
         is_distillation = paradigm == "gradient_based" and config['training']['gradient_based']['type'] == "distillation"
 
-        # 【SNN能力向上】大規模データセット(WikiText)が存在すれば、そちらを優先して使用する
         wikitext_path = "data/wikitext-103_train.jsonl"
         if os.path.exists(wikitext_path):
             print(f"✅ 大規模データセット '{wikitext_path}' を発見。学習に使用します。")
             data_path = wikitext_path
         else:
-            # データパスが指定されていなければconfigの値を使用
             data_path = args.data_path or config['data']['path']
             print(f"⚠️ 大規模データセットが見つからないため、'{data_path}' を使用します。")
             print(f"   より性能を向上させるには、`python scripts/data_preparation.py` を実行してください。")
@@ -85,18 +84,15 @@ def train(
     if paradigm.startswith("bio-"):
         if paradigm == "bio-causal-sparse":
             print("🧬 適応的因果スパース化を有効にした強化学習を開始します。")
-            # 適応的因果スパース化を有効にしてBioRLTrainerを実行
             container.config.training.biologically_plausible.adaptive_causal_sparsification.enabled.from_value(True)
             bio_trainer: BioRLTrainer = container.bio_rl_trainer()
             bio_trainer.train(num_episodes=config['training']['epochs'])
         elif paradigm == "bio-particle-filter":
             print("🌪️ パーティクルフィルタによる確率的学習を開始します (CPUベース)。")
-            # パーティクルフィルタートレーナーを実行
             container.config.training.biologically_plausible.particle_filter.enabled.from_value(True)
             particle_trainer: ParticleFilterTrainer = container.particle_filter_trainer()
-            # ダミーデータで学習ステップを実行
             dummy_data = torch.rand(1, 10, device=device)
-            dummy_targets = torch.rand(1, 2, device=device) # BioSNNの出力サイズに合わせる
+            dummy_targets = torch.rand(1, 2, device=device)
             for epoch in range(config['training']['epochs']):
                 loss = particle_trainer.train_step(dummy_data, dummy_targets)
                 print(f"Epoch {epoch+1}/{config['training']['epochs']}: Particle Filter Loss = {loss:.4f}")
@@ -150,6 +146,7 @@ def train(
         if rank in [-1, 0] and args.task_name and config['training']['gradient_based']['loss']['ewc_weight'] > 0:
             if isinstance(trainer, BreakthroughTrainer):
                 trainer._compute_ewc_fisher_matrix(train_loader, args.task_name)
+
     else:
         raise ValueError(f"Unknown or unsupported training paradigm for this script: '{paradigm}'.")
 
@@ -178,11 +175,11 @@ def main():
     parser.add_argument("--config", type=str, default="configs/base_config.yaml", help="基本設定ファイル")
     parser.add_argument("--model_config", type=str, help="モデルアーキテクチャ設定ファイル")
     parser.add_argument("--data_path", type=str, help="データセットのパス（configを上書き）")
+    parser.add_argument("--task_name", type=str, help="EWCのためにタスク名を指定 (例: 'wikitext')")
     parser.add_argument("--override_config", type=str, action='append', help="設定を上書き (例: 'training.epochs=5')")
     parser.add_argument("--distributed", action="store_true", help="分散学習を有効にする")
     parser.add_argument("--resume_path", type=str, help="チェックポイントから学習を再開する")
     parser.add_argument("--use_astrocyte", action="store_true", help="アストロサイトネットワークを有効にする (gradient_based系のみ)")
-    # paradigm引数を追加
     parser.add_argument("--paradigm", type=str, help="学習パラダイムを上書き (例: gradient_based, bio-causal-sparse, bio-particle-filter)")
     args = parser.parse_args()
 
@@ -191,11 +188,9 @@ def main():
     if args.data_path: container.config.data.path.from_value(args.data_path)
     if args.paradigm: container.config.training.paradigm.from_value(args.paradigm)
     
-    # コマンドラインからの上書きを処理
     if args.override_config:
         for override in args.override_config:
             keys, value = override.split('=', 1)
-            # evalの代わりに安全な型変換を試みる
             try: value = int(value)
             except ValueError:
                 try: value = float(value)
@@ -203,7 +198,6 @@ def main():
                     if value.lower() in ['true', 'false']:
                         value = value.lower() == 'true'
             
-            # ドット記法をネストした辞書に変換
             config_dict = {}
             temp_dict = config_dict
             key_parts = keys.split('.')
@@ -217,10 +211,8 @@ def main():
 
     if args.distributed: dist.init_process_group(backend="nccl")
     
-    # DIコンテナのwiring: main関数内で行うことで、設定読み込み後に依存関係を解決
     container.wire(modules=[__name__])
     
-    # DIコンテナから解決済みのオブジェクトを取得してtrain関数に渡す
     injected_config = container.config()
     injected_tokenizer = container.tokenizer()
     train(args, config=injected_config, tokenizer=injected_tokenizer)
