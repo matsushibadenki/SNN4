@@ -6,6 +6,7 @@
 # 修正点: expert_usedにNoneが含まれる可能性を排除。
 # 改善点: _search_for_urls と _summarize のダミー実装を、より具体的な実装に置き換え。
 # 修正点: mypyエラー [arg-type] を解消するため、nlargestのキーをlambda式に変更。
+# 改善点(v2): スパイクベースのメッセージを受信・処理する機能を追加。
 
 from typing import Dict, Any, Optional, List
 import asyncio
@@ -23,13 +24,23 @@ from snn_research.distillation.knowledge_distillation_manager import KnowledgeDi
 from snn_research.tools.web_crawler import WebCrawler
 from .memory import Memory as AgentMemory
 from snn_research.deployment import SNNInferenceEngine
+from snn_research.communication.spike_encoder_decoder import SpikeEncoderDecoder
 
 
 class AutonomousAgent:
     """
     自律的にタスクを実行するエージェントのベースクラス。
     """
-    def __init__(self, name: str, planner: HierarchicalPlanner, model_registry: ModelRegistry, memory: AgentMemory, web_crawler: WebCrawler, accuracy_threshold: float = 0.6, energy_budget: float = 10000.0):
+    def __init__(
+        self, 
+        name: str, 
+        planner: HierarchicalPlanner, 
+        model_registry: ModelRegistry, 
+        memory: AgentMemory, 
+        web_crawler: WebCrawler, 
+        accuracy_threshold: float = 0.6, 
+        energy_budget: float = 10000.0
+    ):
         self.name = name
         self.planner = planner
         self.model_registry = model_registry
@@ -38,6 +49,34 @@ class AutonomousAgent:
         self.current_state = {"agent_name": name} # 初期状態
         self.accuracy_threshold = accuracy_threshold
         self.energy_budget = energy_budget
+        # --- ◾️◾️◾️◾️◾️↓追加↓◾️◾️◾️◾️◾️ ---
+        self.spike_communicator = SpikeEncoderDecoder()
+        # --- ◾️◾️◾️◾️◾️↑追加↑◾️◾️◾️◾️◾️ ---
+
+    # --- ◾️◾️◾️◾️◾️↓メソッド追加↓◾️◾️◾️◾️◾️ ---
+    def receive_and_process_spike_message(self, spike_pattern: torch.Tensor, source_agent: str):
+        """
+        他のエージェントから送信されたスパイクメッセージを受信し、解釈して記憶する。
+        """
+        print(f"📡 Agent '{self.name}' received a spike message from '{source_agent}'.")
+        decoded_message = self.spike_communicator.decode_message(spike_pattern)
+
+        if decoded_message and "error" not in decoded_message:
+            print(f"  - Decoded Intent: {decoded_message.get('intent')}")
+            print(f"  - Decoded Payload: {decoded_message.get('payload')}")
+            
+            # 受信した情報を経験として自身の長期記憶に記録
+            self.memory.record_experience(
+                state=self.current_state,
+                action="receive_communication",
+                result={"decoded_message": decoded_message, "source": source_agent},
+                reward={"external": 0.2}, # 情報受信はポジティブな報酬
+                expert_used=["spike_communicator"],
+                decision_context={"reason": "Inter-agent communication received."}
+            )
+        else:
+            print(f"  - Failed to decode spike message. Raw text: {decoded_message.get('raw_text', '') if decoded_message else 'N/A'}")
+    # --- ◾️◾️◾️◾️◾️↑メソッド追加↑◾️◾️◾️◾️◾️ ---
 
     def execute(self, task_description: str) -> str:
         """
