@@ -4,6 +4,9 @@
 # - ImportError: attempted relative import with no known parent package を解決。
 # - トップレベルで実行されるスクリプトでの不適切な相対インポートを削除し、
 #   各コマンド関数が必要とするモジュールを局所的にインポートする設計を維持。
+#
+# 改善点 (v12):
+# - ロードマップ フェーズ4 に基づき、人工脳シミュレーションを制御する `brain` コマンドグループを追加。
 
 import sys
 from pathlib import Path
@@ -44,6 +47,11 @@ app.add_typer(ui_app, name="ui")
 
 emergent_app = typer.Typer(help="創発的なマルチエージェントシステムを操作")
 app.add_typer(emergent_app, name="emergent-system")
+
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+brain_app = typer.Typer(help="人工脳シミュレーションを直接制御")
+app.add_typer(brain_app, name="brain")
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 
 @agent_app.command("solve", help="指定されたタスクを解決します。専門家モデルの検索、オンデマンド学習、推論を実行します。")
@@ -314,6 +322,48 @@ def emergent_execute(
     print("\n" + "="*20 + " ✅ FINAL REPORT " + "="*20)
     print(final_report)
     print("="*60)
+
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+@brain_app.command("run", help="単一の入力で人工脳の認知サイクルを1回実行します。")
+def brain_run(
+    input_text: str = typer.Option(..., help="人工脳への感覚入力（テキスト）"),
+    model_config: Path = typer.Option("configs/models/small.yaml", help="モデルアーキテクチャ設定ファイル", exists=True),
+):
+    """人工脳シミュレーションを1サイクル実行する。"""
+    from app.containers import BrainContainer
+    
+    container = BrainContainer()
+    container.config.from_yaml("configs/base_config.yaml")
+    container.config.from_yaml(str(model_config))
+    
+    brain = container.artificial_brain()
+    brain.run_cognitive_cycle(input_text)
+    print("\n✅ 人工脳の認知サイクルが1回完了しました。")
+
+@brain_app.command("loop", help="対話形式で人工脳の認知サイクルを繰り返し実行します。")
+def brain_loop(
+    model_config: Path = typer.Option("configs/models/small.yaml", help="モデルアーキテクチャ設定ファイル", exists=True),
+):
+    """人工脳シミュレーションの対話ループを開始する。"""
+    from app.containers import BrainContainer
+    
+    container = BrainContainer()
+    container.config.from_yaml("configs/base_config.yaml")
+    container.config.from_yaml(str(model_config))
+    
+    brain = container.artificial_brain()
+    
+    print("🧠 人工脳との対話ループを開始します。終了するには 'exit' または Ctrl+C を入力してください。")
+    while True:
+        try:
+            input_text = input("> ")
+            if input_text.lower() == 'exit':
+                break
+            brain.run_cognitive_cycle(input_text)
+        except KeyboardInterrupt:
+            break
+    print("\n👋 対話ループを終了しました。")
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 @app.command(
     "gradient-train",
