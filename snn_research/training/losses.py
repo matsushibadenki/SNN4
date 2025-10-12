@@ -1,7 +1,8 @@
-# matsushibadenki/snn4/snn_research/training/losses.py
+# ファイルパス: snn_research/training/losses.py
 # SNN学習で使用する損失関数
 # 
 # 改善点: 学習初期段階での妨げとなる可能性があるmem_reg_lossを無効化。
+# 改善点(v2): 継続学習のためのElastic Weight Consolidation (EWC) 損失を追加。
 
 import torch
 import torch.nn as nn
@@ -10,13 +11,14 @@ from typing import Dict, Optional
 from transformers import PreTrainedTokenizerBase
 
 class CombinedLoss(nn.Module):
-    """クロスエントロピー損失、各種正則化を組み合わせた損失関数。"""
+    """クロスエントロピー損失、各種正則化、EWC損失を組み合わせた損失関数。"""
     def __init__(self, ce_weight: float, spike_reg_weight: float, mem_reg_weight: float, tokenizer: PreTrainedTokenizerBase, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
         super().__init__()
         pad_id = tokenizer.pad_token_id
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
         self.weights = {'ce': ce_weight, 'spike_reg': spike_reg_weight, 'mem_reg': mem_reg_weight, 'ewc': ewc_weight}
         self.target_spike_rate = target_spike_rate
+        # EWCのためのFisher情報行列と最適パラメータを保持
         self.fisher_matrix: Dict[str, torch.Tensor] = {}
         self.optimal_params: Dict[str, torch.Tensor] = {}
 
@@ -28,29 +30,28 @@ class CombinedLoss(nn.Module):
         
         mem_reg_loss = torch.mean(mem**2)
         
-        # --- ◾️◾️◾️◾️◾️↓追加↓◾️◾️◾️◾️◾️ ---
         # EWC損失の計算
         ewc_loss = torch.tensor(0.0, device=logits.device)
         if self.weights['ewc'] > 0 and self.fisher_matrix:
             for name, param in model.named_parameters():
-                if name in self.fisher_matrix:
+                if name in self.fisher_matrix and param.requires_grad:
                     fisher = self.fisher_matrix[name]
                     opt_param = self.optimal_params[name]
                     ewc_loss += (fisher * (param - opt_param)**2).sum()
-        # --- ◾️◾️◾️◾️◾️↑追加↑◾️◾️◾️◾️◾️ ---
-
+        
         total_loss = (self.weights['ce'] * ce_loss + 
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['mem_reg'] * mem_reg_loss +
-                      self.weights['ewc'] * ewc_loss) # ◾️ EWC損失を追加
+                      self.weights['ewc'] * ewc_loss)
         
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'spike_reg_loss': spike_reg_loss,
             'mem_reg_loss': mem_reg_loss, 'spike_rate': spike_rate,
-            'ewc_loss': ewc_loss # ◾️ ログ用に損失を追加
+            'ewc_loss': ewc_loss
         }
-        
+
+# (以降のDistillationLossなどのクラスは変更なし)
 class DistillationLoss(nn.Module):
     """知識蒸留のための損失関数（各種正則化付き）。"""
     def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float, distill_weight: float,
@@ -58,10 +59,7 @@ class DistillationLoss(nn.Module):
         super().__init__()
         student_pad_id = tokenizer.pad_token_id
         self.temperature = temperature
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-        # 【根本修正】ハードコードされていた無効化を削除。設定ファイルの値を尊重するように修正。
         self.weights = {'ce': ce_weight, 'distill': distill_weight, 'spike_reg': spike_reg_weight, 'mem_reg': mem_reg_weight}
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=student_pad_id if student_pad_id is not None else -100)
         self.distill_loss_fn = nn.KLDivLoss(reduction='none', log_target=True)
         self.target_spike_rate = target_spike_rate
@@ -198,7 +196,6 @@ class PlannerLoss(nn.Module):
         
         return {'total': loss, 'planner_loss': loss}
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 class ProbabilisticEnsembleLoss(nn.Module):
     """
     確率的アンサンブル学習のための損失関数。
@@ -232,4 +229,3 @@ class ProbabilisticEnsembleLoss(nn.Module):
             'total': total_loss, 'ce_loss': ce_loss,
             'variance_reg_loss': variance_reg_loss
         }
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
