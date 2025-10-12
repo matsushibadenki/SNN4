@@ -74,6 +74,7 @@ class SelfEvolvingAgent(AutonomousAgent):
         自己進化のプロセスを実行する。
         アーキテクチャ、学習パラメータ、学習パラダイムのいずれかを進化させる。
         """
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         evolution_choice = random.random()
         if evolution_choice < 0.5:  # 50%の確率でアーキテクチャを進化
             return self._evolve_architecture()
@@ -81,6 +82,7 @@ class SelfEvolvingAgent(AutonomousAgent):
             return self._evolve_learning_parameters()
         else: # 20%の確率で学習パラダイム自体を進化
             return self._evolve_learning_paradigm()
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def _evolve_architecture(self) -> str:
         """モデルアーキテクチャを進化させる。"""
@@ -155,6 +157,7 @@ class SelfEvolvingAgent(AutonomousAgent):
         except Exception as e:
             return f"Learning parameter evolution failed with an error: {e}"
 
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     def _evolve_learning_paradigm(self) -> str:
         """学習パラダイム自体を進化させる。"""
         if not self.training_config_path or not os.path.exists(self.training_config_path):
@@ -185,6 +188,7 @@ class SelfEvolvingAgent(AutonomousAgent):
 
         except Exception as e:
             return f"Learning paradigm evolution failed with an error: {e}"
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def get_next_version(self) -> int:
         # 簡易的なバージョン管理

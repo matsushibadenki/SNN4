@@ -1,4 +1,4 @@
-# ファイルパス: snn_research/rl_env/grid_world.py
+# snn_research/rl_env/grid_world.py
 # (新規作成)
 # Title: Grid World 環境
 # Description: ROADMAPフェーズ2「階層的因果学習」の検証のため、
