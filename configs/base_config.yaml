@@ -40,7 +40,7 @@ training:
       spike_reg_weight: 0.001
       sparsity_reg_weight: 0.0
       mem_reg_weight: 0.00001
-      ewc_weight: 400.0
+      ewc_weight: 400.0 # EWCの強度係数。0で無効。
     distillation:
       teacher_model: "gpt2"
       loss:
@@ -116,7 +116,6 @@ training:
   eval_interval: 1
   log_interval: 1
   
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 model_registry:
   provider: "file"  # "file" or "distributed"
   file:
@@ -125,7 +124,6 @@ model_registry:
     host: localhost
     port: 6379
     db: 0
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 app:
   server_name: "127.0.0.1"
