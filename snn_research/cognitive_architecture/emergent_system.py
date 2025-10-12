@@ -1,4 +1,5 @@
 # ファイルパス: snn_research/cognitive_architecture/emergent_system.py
+# (更新)
 #
 # Title: 創発システム
 #
@@ -29,6 +30,8 @@
 # 修正点 (v4):
 # - mypyエラー `Item "None" of "dict[str, Any] | None" has no attribute "get"` を修正。
 #   `execution_result` がNoneでないことを明示的にチェックする処理を追加。
+#
+# 改善点 (v5): スパイクベースの通信による協調タスク実行シナリオを追加。
 
 import asyncio
 from typing import List, Dict, Any, TYPE_CHECKING, Optional, Tuple
@@ -37,6 +40,7 @@ import random
 from .global_workspace import GlobalWorkspace
 from .hierarchical_planner import HierarchicalPlanner
 from snn_research.distillation.model_registry import ModelRegistry
+from snn_research.communication.spike_encoder_decoder import SpikeEncoderDecoder
 
 # --- 循環インポート解消のための修正 ---
 if TYPE_CHECKING:
@@ -54,6 +58,41 @@ class EmergentCognitiveSystem:
         self.agents = {agent.name: agent for agent in agents}
         self.global_workspace = global_workspace
         self.model_registry = model_registry
+        self.spike_communicator = SpikeEncoderDecoder()
+
+    async def run_cooperative_observation_task(self):
+        """
+        エージェント間のスパイクベース通信をシミュレートする協調タスク。
+        """
+        print("\n--- 🤝 Cooperative Observation Task Start ---")
+        if len(self.agents) < 2:
+            print("  - Not enough agents for cooperative task. Need at least 2.")
+            return
+
+        # 役割を割り当て
+        sender_name, receiver_name = random.sample(list(self.agents.keys()), 2)
+        sender = self.agents[sender_name]
+        receiver = self.agents[receiver_name]
+
+        print(f"  - Observer: {sender.name}, Receiver: {receiver.name}")
+
+        # 1. 観測者が情報を発見
+        observation = {"intent": "inform_observation", "payload": {"object": "red ball", "location": "field"}}
+        print(f"  - {sender.name} observed: {observation['payload']}")
+
+        # 2. 観測者が情報をスパイクにエンコードしてブロードキャスト
+        spike_message = self.spike_communicator.encode_message(observation['intent'], observation['payload'])
+        self.global_workspace.broadcast(sender.name, {"spike_message": spike_message}) # GlobalWorkspaceは内部でさらにエンコードするが、ここではデモとしてラップ
+        print(f"  - {sender.name} is broadcasting the observation as a spike pattern...")
+
+        # 3. 受信者がスパイクメッセージを受信して処理
+        broadcasted_info = self.global_workspace.get_information(sender.name)
+        if broadcasted_info and "spike_message" in broadcasted_info:
+            receiver.receive_and_process_spike_message(broadcasted_info["spike_message"], source_agent=sender.name)
+        else:
+            print("  - Error: Could not retrieve spike message from Global Workspace.")
+
+        print("--- ✅ Cooperative Observation Task Finished ---\n")
 
     def execute_task(self, high_level_goal: str) -> str:
         """
