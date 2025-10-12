@@ -1,4 +1,4 @@
-# matsushibadenki/snn4/snn4-79496245059a9838ecdcdf953e28024581f28ba2/snn-cli.py
+# ファイルパス: matsushibadenki/snn4/snn-cli.py
 # Title: 統合CLIツール
 # Description:
 # - プロジェクトの全機能を一元的に管理・実行するためのコマンドラインインターフェース。
@@ -114,7 +114,7 @@ def planner_execute(
     container.config.from_yaml("configs/base_config.yaml")
     planner = container.hierarchical_planner()
     
-    final_result = planner.execute_task(task_request=request, context=context)
+    final_result = asyncio.run(planner.execute_task(task_request=request, context=context))
     if final_result:
         print("\n" + "="*20 + " ✅ FINAL RESULT " + "="*20)
         print(final_result)
@@ -215,7 +215,7 @@ def evolve_run(
         model_registry=container.model_registry(),
         memory=container.memory(),
         web_crawler=container.web_crawler(),
-        project_root=".",
+        project_root=".", 
         model_config_path=str(model_config),
         training_config_path=str(training_config)
     )
@@ -446,4 +446,3 @@ def gradient_train(ctx: typer.Context):
 
 if __name__ == "__main__":
     app()
-
