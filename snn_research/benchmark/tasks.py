@@ -11,6 +11,9 @@
 # 修正点(v2):
 # - RuntimeErrorを解消するため、SNNClassifierが使用するBreakthroughSNNの
 #   d_stateパラメータを調整し、次元の不整合を修正。
+#
+# 修正点(v3):
+# - 循環参照エラーを解消するため、TASK_REGISTRYの定義を __init__.py に移動。
 
 import os
 import json
@@ -23,7 +26,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedTokenizerBase
 
-from snn_research.core.snn_core import BreakthroughSNN
+from snn_research.core.snn_core import BreakthroughSNN, SNNCore
 from snn_research.benchmark.ann_baseline import ANNBaselineModel
 from snn_research.benchmark.metrics import calculate_accuracy, calculate_energy_consumption
 from snn_research.hardware.profiles import get_hardware_profile
@@ -100,14 +103,14 @@ class SST2Task(BenchmarkTask):
             def __init__(self, snn_backbone):
                 super().__init__()
                 self.snn_backbone = snn_backbone
-                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
                 # BreakthroughSNNの隠れ層の次元に合わせて分類器を定義
-                if isinstance(snn_backbone, BreakthroughSNN):
+                if isinstance(snn_backbone, SNNCore) and isinstance(snn_backbone.model, BreakthroughSNN):
+                    in_features = snn_backbone.model.d_state * snn_backbone.model.num_layers
+                elif isinstance(snn_backbone, BreakthroughSNN):
                     in_features = snn_backbone.d_state * snn_backbone.num_layers
-                else:
+                else: # ANNBaselineModel
                     in_features = snn_backbone.d_model
                 self.classifier = nn.Linear(in_features, 2)
-                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
             
             def forward(self, input_ids, **kwargs):
                 # SNNの出力から最後のタイムステップの特徴量を取得して分類
@@ -122,18 +125,17 @@ class SST2Task(BenchmarkTask):
                 return logits, spikes, mem
 
         if model_type == 'SNN':
-            backbone = BreakthroughSNN(
-                vocab_size=vocab_size,
-                d_model=64, 
-                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-                # d_state * num_layers が d_model と一致するように調整
-                d_state=16,
-                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-                num_layers=4,
-                time_steps=64,
-                n_head=2,
-                neuron_config={'type': 'lif'}
-            )
+            # SNNCoreでラップしてSNNモデルを構築
+            snn_config = {
+                "architecture_type": "predictive_coding",
+                "d_model": 64,
+                "d_state": 16,
+                "num_layers": 4,
+                "time_steps": 64,
+                "n_head": 2,
+                "neuron": {'type': 'lif'}
+            }
+            backbone = SNNCore(config=snn_config, vocab_size=vocab_size)
             return SNNClassifier(backbone)
         else:
             ann_params = {'d_model': 64, 'd_hid': 128, 'nlayers': 2, 'nhead': 2, 'num_classes': 2}
