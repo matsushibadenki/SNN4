@@ -1,5 +1,5 @@
 # ファイルパス: scripts/run_compiler_test.py
-# (新規作成)
+# (更新)
 #
 # Title: ニューロモーフィック・コンパイラ テストスクリプト
 #
@@ -8,10 +8,14 @@
 #   NeuromorphicCompilerの動作を検証するためのスクリプト。
 # - ダミーのBioSNNモデルを構築し、それをハードウェア構成ファイルに
 #   コンパイルするプロセスを実行する。
+#
+# 改善点(v2):
+# - ROADMAPフェーズ6に基づき、コンパイル後のハードウェア性能シミュレーションを実行する処理を追加。
 
 import sys
 from pathlib import Path
 import os
+import torch
 
 # プロジェクトルートをPythonパスに追加
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -50,11 +54,30 @@ def main():
 
     # 4. 結果の確認
     if os.path.exists(output_path):
-        print(f"\n✅ テスト成功: コンパイルされた設定ファイルが '{output_path}' に生成されました。")
+        print(f"\n✅ コンパイル成功: 設定ファイルが '{output_path}' に生成されました。")
+        
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        # 5. ハードウェア上での性能シミュレーションを実行
+        #    ダミーのスパイク数とタイムステップ数を設定
+        total_spikes_for_simulation = 15000
+        time_steps_for_simulation = 100
+        
+        simulation_report = compiler.simulate_on_hardware(
+            compiled_config_path=output_path,
+            total_spikes=total_spikes_for_simulation,
+            time_steps=time_steps_for_simulation
+        )
+        
+        print("\n--- 📊 ハードウェアシミュレーション結果 ---")
+        for key, value in simulation_report.items():
+            print(f"  - {key}: {value:.4e}")
+        print("------------------------------------------")
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        
     else:
         print(f"\n❌ テスト失敗: 設定ファイルが生成されませんでした。")
 
-    print("--- ニューロモーフィック・コンパイラ テスト終了 ---")
+    print("\n--- ニューロモーフィック・コンパイラ テスト終了 ---")
 
 
 if __name__ == "__main__":
