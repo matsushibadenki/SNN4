@@ -1,5 +1,5 @@
 # ファイルパス: app/containers.py
-# (修正 v10 - 最終修正)
+# (修正 v11 - 最終修正)
 # 根本修正: pytest収集時に発生するすべての `TypeError: ... must be a mapping, not NoneType` を
 #           完全に解消するため、DIコンテナの定義方法を全面的に見直し、
 #           すべての設定値アクセスをオブジェクト生成時まで遅延させる記述に統一した。
@@ -98,41 +98,54 @@ class TrainingContainer(containers.DeclarativeContainer):
     meta_cognitive_snn = providers.Factory(MetaCognitiveSNN)
 
     # === Losses ===
-    standard_loss = providers.Factory(CombinedLoss, tokenizer=tokenizer, **config.training.gradient_based.loss.as_dict())
-    distillation_loss = providers.Factory(DistillationLoss, tokenizer=tokenizer, **config.training.gradient_based.distillation.loss.as_dict())
-    physics_informed_loss = providers.Factory(PhysicsInformedLoss, tokenizer=tokenizer, **config.training.physics_informed.loss.as_dict())
+    standard_loss = providers.Factory(
+        CombinedLoss, tokenizer=tokenizer, 
+        ce_weight=config.training.gradient_based.loss.ce_weight,
+        spike_reg_weight=config.training.gradient_based.loss.spike_reg_weight,
+        mem_reg_weight=config.training.gradient_based.loss.mem_reg_weight,
+    )
+    distillation_loss = providers.Factory(
+        DistillationLoss, tokenizer=tokenizer,
+        ce_weight=config.training.gradient_based.distillation.loss.ce_weight,
+        distill_weight=config.training.gradient_based.distillation.loss.distill_weight,
+        spike_reg_weight=config.training.gradient_based.distillation.loss.spike_reg_weight,
+        mem_reg_weight=config.training.gradient_based.distillation.loss.mem_reg_weight,
+        temperature=config.training.gradient_based.distillation.loss.temperature,
+    )
+    physics_informed_loss = providers.Factory(
+        PhysicsInformedLoss, tokenizer=tokenizer,
+        ce_weight=config.training.physics_informed.loss.ce_weight,
+        spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight,
+        mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight,
+    )
+
+    # === Optimizers ===
+    grad_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate)
+    pi_optimizer = providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.physics_informed.learning_rate)
+
+    # === Schedulers ===
+    grad_scheduler = providers.Factory(_create_scheduler, optimizer=grad_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs)
+    pi_scheduler = providers.Factory(_create_scheduler, optimizer=pi_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs)
 
     # === Trainers ===
-    standard_trainer = providers.Singleton(
-        BreakthroughTrainer,
-        model=snn_model,
-        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate),
-        criterion=standard_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs),
-        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
+    standard_trainer = providers.Factory(
+        BreakthroughTrainer, model=snn_model, optimizer=grad_optimizer, criterion=standard_loss, scheduler=grad_scheduler, device=device,
+        grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
-    distillation_trainer = providers.Singleton(
-        DistillationTrainer,
-        model=snn_model,
-        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.gradient_based.learning_rate),
-        criterion=distillation_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.gradient_based.warmup_epochs),
-        device=device, grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
+    distillation_trainer = providers.Factory(
+        DistillationTrainer, model=snn_model, optimizer=grad_optimizer, criterion=distillation_loss, scheduler=grad_scheduler, device=device,
+        grad_clip_norm=config.training.gradient_based.grad_clip_norm, rank=-1, use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
 
-    physics_informed_trainer = providers.Singleton(
-        PhysicsInformedTrainer,
-        model=snn_model,
-        optimizer=providers.Factory(AdamW, params=snn_model.provided.parameters.call(), lr=config.training.physics_informed.learning_rate),
-        criterion=physics_informed_loss,
-        scheduler=providers.Factory(_create_scheduler, optimizer=providers.Self.optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs),
-        device=device, grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp,
+    physics_informed_trainer = providers.Factory(
+        PhysicsInformedTrainer, model=snn_model, optimizer=pi_optimizer, criterion=physics_informed_loss, scheduler=pi_scheduler, device=device,
+        grad_clip_norm=config.training.physics_informed.grad_clip_norm, rank=-1, use_amp=config.training.physics_informed.use_amp,
         log_dir=config.training.log_dir, astrocyte_network=astrocyte_network, meta_cognitive_snn=meta_cognitive_snn
     )
-
+    
     # === Bio Learning ===
     bio_learning_rule = providers.Factory(
         get_bio_learning_rule,
@@ -150,7 +163,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     particle_filter_trainer = providers.Factory(
         ParticleFilterTrainer,
         base_model=bio_snn_model,
-        config=config.get(), # Pass the whole config dict
+        config=config.training.biologically_plausible.particle_filter.as_dict(),
         device=device
     )
 
@@ -158,7 +171,6 @@ class TrainingContainer(containers.DeclarativeContainer):
     rl_agent = providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device)
     bio_rl_trainer = providers.Factory(BioRLTrainer, agent=rl_agent, env=rl_environment)
     
-    # ... (rest of the file remains the same)
     planner_snn = providers.Factory(PlannerSNN, vocab_size=providers.Callable(lambda t: len(t) if t else 50257, tokenizer.provided), d_model=config.model.d_model, d_state=config.model.d_state, num_layers=config.model.num_layers, time_steps=config.model.time_steps, n_head=config.model.n_head, num_skills=10)
     planner_optimizer = providers.Factory(AdamW, lr=config.training.planner.learning_rate)
     planner_loss = providers.Factory(PlannerLoss)
