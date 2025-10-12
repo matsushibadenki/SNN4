@@ -1,15 +1,17 @@
 # ファイルパス: snn_research/communication/spike_encoder_decoder.py
-# (新規作成)
+# (更新)
 # Title: スパイク エンコーダー/デコーダー
 # Description: ROADMAPフェーズ4「スパイクベース通信プロトコル」に基づき、
 #              抽象データ（テキスト、辞書）とスパイクパターンを相互に変換する。
 # 修正点:
 # - mypyエラー `Name "random" is not defined` を解消するため、randomモジュールをインポート。
+# 改善点(v2): エージェント間通信プロトコルの基礎として、メッセージに
+#              「意図」と「内容」を含めるようにエンコード・デコード機能を拡張。
 
 import torch
 import json
 import random
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 class SpikeEncoderDecoder:
     """
@@ -25,9 +27,9 @@ class SpikeEncoderDecoder:
         self.num_neurons = num_neurons
         self.time_steps = time_steps
 
-    def encode_text_to_spikes(self, text: str) -> torch.Tensor:
+    def _encode_text_to_spikes(self, text: str) -> torch.Tensor:
         """
-        テキスト文字列をレート符号化を用いてスパイクパターンに変換する。
+        テキスト文字列をレート符号化を用いてスパイクパターンに変換する内部メソッド。
         """
         spike_pattern = torch.zeros((self.num_neurons, self.time_steps))
         for char in text:
@@ -40,9 +42,9 @@ class SpikeEncoderDecoder:
                 spike_pattern[neuron_id, t] = 1
         return spike_pattern
 
-    def decode_spikes_to_text(self, spikes: torch.Tensor) -> str:
+    def _decode_spikes_to_text(self, spikes: torch.Tensor) -> str:
         """
-        スパイクパターンをテキスト文字列にデコードする。
+        スパイクパターンをテキスト文字列にデコードする内部メソッド。
         """
         if spikes is None or not isinstance(spikes, torch.Tensor):
             return ""
@@ -51,22 +53,32 @@ class SpikeEncoderDecoder:
         # 発火数が最も多いニューロンから文字を復元（複数可）
         char_indices = torch.where(spike_counts > 0)[0]
         
-        text = "".join([chr(int(idx)) for idx in char_indices if int(idx) < 256])
+        # 発火数でソートし、より確からしい文字から再構築する
+        sorted_indices = sorted(char_indices, key=lambda idx: spike_counts[idx], reverse=True)
+
+        text = "".join([chr(int(idx)) for idx in sorted_indices if int(idx) < 256])
         return text
 
-    def encode_dict_to_spikes(self, data: Dict[str, Any]) -> torch.Tensor:
+    def encode_message(self, intent: str, payload: Dict[str, Any]) -> torch.Tensor:
         """
-        辞書をJSON文字列に変換してからスパイクにエンコードする。
+        意図とペイロードを持つメッセージをスパイクパターンにエンコードする。
         """
-        json_str = json.dumps(data, sort_keys=True)
-        return self.encode_text_to_spikes(json_str)
+        message_dict = {
+            "intent": intent,
+            "payload": payload
+        }
+        json_str = json.dumps(message_dict, sort_keys=True)
+        return self._encode_text_to_spikes(json_str)
 
-    def decode_spikes_to_dict(self, spikes: torch.Tensor) -> Dict[str, Any]:
+    def decode_message(self, spikes: torch.Tensor) -> Optional[Dict[str, Any]]:
         """
-        スパイクをデコードしてJSON文字列に戻し、辞書にパースする。
+        スパイクをデコードしてメッセージ（辞書）にパースする。
         """
-        json_str = self.decode_spikes_to_text(spikes)
+        json_str = self._decode_spikes_to_text(spikes)
         try:
-            return json.loads(json_str)
+            message = json.loads(json_str)
+            if "intent" in message and "payload" in message:
+                return message
+            return {"error": "Invalid message format", "raw_text": json_str}
         except json.JSONDecodeError:
             return {"error": "Failed to decode spikes to dict", "raw_text": json_str}
