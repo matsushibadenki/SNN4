@@ -22,55 +22,58 @@
 graph TD  
     CLI["snn-cli.py<br/>統合CLIツール"]
     
-    subgraph Orchestration ["自律実行と思考のオーケストレーション"]  
+    subgraph Orchestration["自律実行と思考のオーケストレーション"]
         LifeForm["DigitalLifeForm<br/>(デジタル生命体)"]  
         Motivation["内発的動機システム"]  
         MetaCognition["メタ認知SNN"]  
-          
-        LifeForm --> |"思考・行動を<br/>オーケストレーション"| Agent_Autonomous["AutonomousAgent<br/>(タスク実行・Web学習)"]  
-        LifeForm --> |"思考・行動を<br/>オーケストレーション"| Agent_SelfEvolving["SelfEvolvingAgent<br/>(自己進化)"]  
-        LifeForm --> |"思考・行動を<br/>オーケストレーション"| Agent_RL["ReinforcementLearnerAgent<br/>(強化学習)"]
-        LifeForm --> |"内部状態を監視"| Motivation  
-        LifeForm --> |"パフォーマンスを評価"| MetaCognition  
+        Agent_Autonomous["AutonomousAgent<br/>(タスク実行・Web学習)"]
+        Agent_SelfEvolving["SelfEvolvingAgent<br/>(自己進化)"]
+        Agent_RL["ReinforcementLearnerAgent<br/>(強化学習)"]
+        
+        LifeForm -->|"思考・行動を<br/>オーケストレーション"| Agent_Autonomous
+        LifeForm -->|"思考・行動を<br/>オーケストレーション"| Agent_SelfEvolving
+        LifeForm -->|"思考・行動を<br/>オーケストレーション"| Agent_RL
+        LifeForm -->|"内部状態を監視"| Motivation
+        LifeForm -->|"パフォーマンスを評価"| MetaCognition
     end
     
-    subgraph Cognition ["高次認知機能"]  
+    subgraph Cognition["高次認知機能"]
         Planner["HierarchicalPlanner<br/>(階層プランナー)"]  
         Memory["Memory<br/>(RAG連携 長期記憶)"]  
         RAG["RAGSystem<br/>(ベクトル検索)"]
         
-        Planner --> |"記憶を検索"| Memory  
-        Memory --> |"ベクトル検索を利用"| RAG  
+        Planner -->|"記憶を検索"| Memory
+        Memory -->|"ベクトル検索を利用"| RAG
     end
     
-    subgraph Engine ["中核エンジン：学習と推論"]  
+    subgraph Engine["中核エンジン：学習と推論"]
         TrainPy["train.py<br/>(学習パイプライン)"]  
         SNN_Core["SNN_Core<br/>(Transformer, Mamba, HRM等)"]  
         BioRules["生物学的学習則<br/>(STDP, 因果追跡)"]  
         InferenceEngine["SNNInferenceEngine<br/>(推論エンジン)"]
         
-        TrainPy --> |"モデルを訓練"| SNN_Core  
-        TrainPy --> |"学習則を利用"| BioRules  
-        InferenceEngine --> |"モデルをロード"| SNN_Core  
+        TrainPy -->|"モデルを訓練"| SNN_Core
+        TrainPy -->|"学習則を利用"| BioRules
+        InferenceEngine -->|"モデルをロード"| SNN_Core
     end
     
-    CLI --> |"life-form start"| LifeForm  
-    CLI --> |"agent solve"| Agent_Autonomous  
-    CLI --> |"evolve run"| Agent_SelfEvolving  
-    CLI --> |"rl run"| Agent_RL  
-    CLI --> |"planner execute"| Planner  
-    CLI --> |"gradient-train"| TrainPy
+    CLI -->|"life-form start"| LifeForm
+    CLI -->|"agent solve"| Agent_Autonomous
+    CLI -->|"evolve run"| Agent_SelfEvolving
+    CLI -->|"rl run"| Agent_RL
+    CLI -->|"planner execute"| Planner
+    CLI -->|"gradient-train"| TrainPy
     
-    classDef cli fill:#b39ddb,stroke:#333,stroke-width:3px,color:#fff  
-    classDef orchestrator fill:#cde4ff,stroke:#333,stroke-width:2px  
-    classDef agent fill:#d4edda,stroke:#333,stroke-width:1px  
-    classDef cognition fill:#ffe4c4,stroke:#333,stroke-width:1px  
+    classDef cli fill:#b39ddb,stroke:#333,stroke-width:3px,color:#fff
+    classDef orchestrator fill:#cde4ff,stroke:#333,stroke-width:2px
+    classDef agent fill:#d4edda,stroke:#333,stroke-width:1px
+    classDef cognition fill:#ffe4c4,stroke:#333,stroke-width:1px
     classDef engine fill:#f8d7da,stroke:#333,stroke-width:1px
     
-    class CLI cli  
-    class LifeForm,Motivation,MetaCognition orchestrator  
-    class Agent_Autonomous,Agent_SelfEvolving,Agent_RL agent  
-    class Planner,Memory,RAG cognition  
+    class CLI cli
+    class LifeForm,Motivation,MetaCognition orchestrator
+    class Agent_Autonomous,Agent_SelfEvolving,Agent_RL agent
+    class Planner,Memory,RAG cognition
     class TrainPy,SNN_Core,BioRules,InferenceEngine engine
 ```
 
