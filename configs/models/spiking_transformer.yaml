@@ -1,4 +1,5 @@
 # configs/models/spiking_transformer.yaml
+# (修正)
 # スパイキングトランスフォーマーモデルの設定
 
 type: spiking_transformer
@@ -8,3 +9,5 @@ params:
   num_heads: 8
   vocab_size: 10000  # データセットに合わせて要調整
   max_len: 512
+  multi_level_attention:
+    time_scales: [1, 3, 5] # 短期(1), 中期(3), 長期(5)の時間スケール
