@@ -3,24 +3,8 @@
 # Description:
 # - プロジェクトの全機能を一元的に管理・実行するためのコマンドラインインターフェース。
 #
-# 修正点 (v13):
-# - life-formコマンド実行時のTypeErrorを解消。get_life_form_instanceがモデル設定ファイルを
-#   読み込むように修正し、PlannerSNNの初期化に必要なパラメータが渡されるようにした。
-#
-# 改善点 (v14):
-# - 性能証明のワークフローを統一するため、`benchmark`コマンドグループを正式に実装。
-#   - `benchmark train`: 分類タスク用のモデルを訓練する。
-#   - `benchmark run`: 訓練済みモデルでベンチマークを測定する。
-#
-# 修正点 (v15):
-# - SyntaxErrorを解消するため、ファイル末尾に誤って混入していたPythonコード以外の説明文を削除。
-#
-# 改善点 (v16):
-# - スパイクベースの通信タスクを実行するための `emergent-system communicate` コマンドを追加。
-#
-# 改善点 (v17):
-# - ROADMAP v8.0 フェーズ4に基づき、人工脳シミュレーションを制御するための
-#   `brain` コマンドグループ (`run`, `loop`) を追加。
+# 改善点 (v18):
+# - DigitalLifeFormを起動し、自己言及させるための`life-form`コマンドグループを追加。
 
 import sys
 from pathlib import Path
@@ -157,6 +141,7 @@ def life_form_explain(
     else:
         print("説明の生成に失敗しました。")
     print("="*64)
+
 
 @evolve_app.command("run", help="自己進化サイクルを1回実行します。AIが自身の性能を評価し、アーキテクチャを改善します。")
 def evolve_run(
