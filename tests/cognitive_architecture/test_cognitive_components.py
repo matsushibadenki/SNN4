@@ -42,17 +42,17 @@ def test_amygdala_evaluates_positive_emotion(mock_workspace):
     amygdala = Amygdala(workspace=mock_workspace)
     amygdala.evaluate_and_upload("素晴らしい成功体験でした。")
     mock_workspace.upload_to_workspace.assert_called_once()
-    args, _ = mock_workspace.upload_to_workspace.call_args
-    assert args[2] > 0.5  # salience
-    assert args[1]['valence'] > 0
+    _, kwargs = mock_workspace.upload_to_workspace.call_args
+    assert kwargs['salience'] > 0.5
+    assert kwargs['data']['valence'] > 0
     print("\n✅ Amygdala: ポジティブな感情の評価テストに成功。")
 
 def test_amygdala_evaluates_negative_emotion(mock_workspace):
     amygdala = Amygdala(workspace=mock_workspace)
     amygdala.evaluate_and_upload("危険なエラーが発生し、失敗した。")
     mock_workspace.upload_to_workspace.assert_called_once()
-    args, _ = mock_workspace.upload_to_workspace.call_args
-    assert args[1]['valence'] < 0
+    _, kwargs = mock_workspace.upload_to_workspace.call_args
+    assert kwargs['data']['valence'] < 0
     print("✅ Amygdala: ネガティブな感情の評価テストに成功。")
 
 def test_amygdala_handles_mixed_emotion(mock_workspace):
@@ -60,16 +60,16 @@ def test_amygdala_handles_mixed_emotion(mock_workspace):
     amygdala = Amygdala(workspace=mock_workspace)
     amygdala.evaluate_and_upload("失敗の中に喜びを見出す。")
     mock_workspace.upload_to_workspace.assert_called_once()
-    args, _ = mock_workspace.upload_to_workspace.call_args
-    assert -0.1 < args[1]['valence'] < 0.2
+    _, kwargs = mock_workspace.upload_to_workspace.call_args
+    assert -0.1 < kwargs['data']['valence'] < 0.2
     print("✅ Amygdala: 混合感情の評価テストに成功。")
 
 def test_amygdala_handles_neutral_text(mock_workspace):
     amygdala = Amygdala(workspace=mock_workspace)
     amygdala.evaluate_and_upload("これはただの事実です。")
     mock_workspace.upload_to_workspace.assert_called_once()
-    args, _ = mock_workspace.upload_to_workspace.call_args
-    assert args[1]['valence'] == 0.0
+    _, kwargs = mock_workspace.upload_to_workspace.call_args
+    assert kwargs['data']['valence'] == 0.0
     print("✅ Amygdala: 中立的なテキストの評価テストに成功。")
 
 def test_amygdala_handles_empty_string(mock_workspace):
@@ -77,8 +77,8 @@ def test_amygdala_handles_empty_string(mock_workspace):
     amygdala = Amygdala(workspace=mock_workspace)
     amygdala.evaluate_and_upload("")
     mock_workspace.upload_to_workspace.assert_called_once()
-    args, _ = mock_workspace.upload_to_workspace.call_args
-    assert args[1]['valence'] == 0.0
+    _, kwargs = mock_workspace.upload_to_workspace.call_args
+    assert kwargs['data']['valence'] == 0.0
     print("✅ Amygdala: 空文字列入力のテストに成功。")
 
 # --- BasalGanglia Tests ---
