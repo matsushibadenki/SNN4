@@ -3,13 +3,13 @@
 # BugFix: データセット側で入力とターゲットのペアを正しく作成するように修正し、
 #         collate_fnを簡素化することで、学習データの不整合問題を解消。
 # BugFix: ファイル内にあった不正な閉じ括弧を削除し、mypyの構文エラーを修正。
-# 改善点: 学習エポック数を30から50に増やし、精度向上を図る。
+# 修正: mypyエラー `Name "Tuple" is not defined` を解消するため、Tupleをインポート。
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedModel, PreTrainedTokenizer, AutoModelForCausalLM, AutoTokenizer
-from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast
+from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast, Tuple
 import asyncio
 import os
 import json
@@ -58,12 +58,12 @@ class KnowledgeDistillationManager:
                 self.max_length = max_length
                 self.teacher_model = teacher_model
                 self.device = device
-                self.cache = {}
+                self.cache: Dict[int, Dict[str, torch.Tensor]] = {}
 
             def __len__(self):
                 return len(self.texts)
 
-            def __getitem__(self, idx):
+            def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
                 if idx in self.cache:
                     return self.cache[idx]
 
@@ -77,15 +77,19 @@ class KnowledgeDistillationManager:
                 )
                 input_ids = tokenized['input_ids'].squeeze(0)
                 
+                # データセット側で正しい入力とターゲットのペアを作成する
                 student_input = input_ids[:-1]
                 student_target = input_ids[1:]
                 
                 with torch.no_grad():
+                    # 教師モデルの推論は入力全体で行う
                     teacher_logits_full = self.teacher_model(input_ids.unsqueeze(0).to(self.device)).logits.squeeze(0).cpu()
+                    # 生徒の入力に対応する部分だけを切り出す
                     teacher_logits = teacher_logits_full[:-1]
                 
+                # attention_maskも同様に調整
                 attention_mask = tokenized['attention_mask'].squeeze(0)[:-1]
-                
+
                 result = {
                     'input_ids': student_input,
                     'attention_mask': attention_mask,
@@ -102,7 +106,7 @@ class KnowledgeDistillationManager:
         train_size = len(dataset) - val_size
         train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
-        def collate_fn(batch):
+        def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Tuple[torch.Tensor, ...]:
             input_ids = torch.stack([item['input_ids'] for item in batch])
             attention_mask = torch.stack([item['attention_mask'] for item in batch])
             targets = torch.stack([item['targets'] for item in batch])
@@ -149,6 +153,7 @@ class KnowledgeDistillationManager:
         save_path = os.path.join(save_dir, "best_model.pth")
         print(f"Step 3: Saving the model to {save_path}...")
         
+        # 【根本修正】推論時の不整合を防ぐため、保存すべきでない一時的なバッファを全て除外する
         model_to_save = self.distillation_trainer.model.module if isinstance(self.distillation_trainer.model, nn.parallel.DistributedDataParallel) else self.distillation_trainer.model
         buffers_to_exclude = {
             name for name, _ in model_to_save.named_buffers() 
@@ -205,10 +210,11 @@ class KnowledgeDistillationManager:
         batch_size = 4
         train_loader, val_loader = self.prepare_dataset(texts, max_length=max_len, batch_size=batch_size)
         
+        # 学習エポック数を30から50に増やし、学習精度を向上させる
         new_model_info = await self.run_distillation(
             train_loader=train_loader,
             val_loader=val_loader,
-            epochs=50, # 30から50に増加
+            epochs=50,
             model_id=task_description,
             task_description=f"Expert for {task_description}",
             student_config=student_config
