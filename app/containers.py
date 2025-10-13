@@ -111,7 +111,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     pi_scheduler = providers.Factory(_create_scheduler, optimizer=pi_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs)
     physics_informed_trainer = providers.Factory(PhysicsInformedTrainer, criterion=providers.Factory(PhysicsInformedLoss, ce_weight=config.training.physics_informed.loss.ce_weight, spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight, mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight, tokenizer=tokenizer), grad_clip_norm=config.training.physics_informed.grad_clip_norm, use_amp=config.training.physics_informed.use_amp, log_dir=config.training.log_dir, meta_cognitive_snn=meta_cognitive_snn)
     bio_rl_trainer = providers.Factory(BioRLTrainer, agent=providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device), env=providers.Factory(GridWorldEnv, device=device))
-    particle_filter_trainer = providers.Factory(ParticleFilterTrainer, base_model=providers.Factory(BioSNN, layer_sizes=[10, 5, 2], neuron_params={'tau_mem': 10.0, 'v_threshold': 1.0, 'v_reset': 0.0, 'v_rest': 0.0}, learning_rule=providers.Object(None)), config=config, device=device)
+    particle_filter_trainer = providers.Factory(ParticleFilterTrainer, base_model=providers.Factory(BioSNN, layer_sizes=[10, 5, 2], neuron_params={'tau_mem': 10.0, 'v_threshold': 1.0, 'v_reset': 0.0, 'v_rest': 0.0}, learning_rule=providers.Object(None), sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification), config=config, device=device)
     planner_snn = providers.Factory(PlannerSNN, vocab_size=providers.Callable(len, tokenizer), d_model=config.model.d_model, d_state=config.model.d_state, num_layers=config.model.num_layers, time_steps=config.model.time_steps, n_head=config.model.n_head, num_skills=10, neuron_config=config.model.neuron)
     planner_optimizer = providers.Factory(AdamW, lr=config.training.planner.learning_rate)
     planner_loss = providers.Factory(PlannerLoss)
@@ -152,7 +152,7 @@ class BrainContainer(containers.DeclarativeContainer):
     spike_encoder = providers.Singleton(SpikeEncoder, num_neurons=num_neurons)
     actuator = providers.Singleton(Actuator, actuator_name="voice_synthesizer")
 
-    perception_cortex = providers.Singleton(HybridPerceptionCortex, workspace=global_workspace, num_neurons=num_neurons, feature_dim=64, som_map_size=providers.List(8, 8), stdp_params=config.training.biologically_plausible.stdp)
+    perception_cortex = providers.Singleton(HybridPerceptionCortex, workspace=global_workspace, num_neurons=num_neurons, feature_dim=64, som_map_size=(8, 8), stdp_params=config.training.biologically_plausible.stdp.to_dict())
     prefrontal_cortex = providers.Singleton(PrefrontalCortex, workspace=global_workspace, motivation_system=motivation_system)
     
     hippocampus = providers.Singleton(Hippocampus, workspace=global_workspace, capacity=50)
