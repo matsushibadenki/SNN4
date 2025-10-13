@@ -159,7 +159,16 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     standard_trainer = providers.Factory(
         BreakthroughTrainer,
-        criterion=providers.Factory(CombinedLoss, **config.training.gradient_based.loss, tokenizer=tokenizer),
+        criterion=providers.Factory(
+            CombinedLoss,
+            ce_weight=config.training.gradient_based.loss.ce_weight,
+            spike_reg_weight=config.training.gradient_based.loss.spike_reg_weight,
+            mem_reg_weight=config.training.gradient_based.loss.mem_reg_weight,
+            sparsity_reg_weight=config.training.gradient_based.loss.sparsity_reg_weight,
+            tokenizer=tokenizer,
+            target_spike_rate=config.training.gradient_based.loss.get('target_spike_rate', 0.02),
+            ewc_weight=config.training.gradient_based.loss.ewc_weight,
+        ),
         grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir,
@@ -167,7 +176,11 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     distillation_trainer = providers.Factory(
         DistillationTrainer,
-         criterion=providers.Factory(DistillationLoss, **config.training.gradient_based.distillation.loss, tokenizer=tokenizer),
+         criterion=providers.Factory(
+             DistillationLoss,
+             **config.training.gradient_based.distillation.loss,
+             tokenizer=tokenizer,
+         ),
         grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir,
@@ -185,7 +198,11 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     physics_informed_trainer = providers.Factory(
         PhysicsInformedTrainer,
-         criterion=providers.Factory(PhysicsInformedLoss, **config.training.physics_informed.loss, tokenizer=tokenizer),
+         criterion=providers.Factory(
+             PhysicsInformedLoss,
+             **config.training.physics_informed.loss,
+             tokenizer=tokenizer,
+         ),
         grad_clip_norm=config.training.physics_informed.grad_clip_norm,
         use_amp=config.training.physics_informed.use_amp,
         log_dir=config.training.log_dir,
