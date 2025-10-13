@@ -147,7 +147,6 @@ class TrainingContainer(containers.DeclarativeContainer):
         **(config.training.meta_cognition.to_dict() or {})
     )
 
-    # (省略: 他のTrainer関連のプロバイダは変更なし)
     optimizer = providers.Factory(
         AdamW,
         lr=config.training.gradient_based.learning_rate
@@ -160,7 +159,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     standard_trainer = providers.Factory(
         BreakthroughTrainer,
-        criterion=providers.Factory(CombinedLoss, **config.training.gradient_based.loss.to_dict(), tokenizer=tokenizer),
+        criterion=providers.Factory(CombinedLoss, **(config.training.gradient_based.loss.to_dict() or {}), tokenizer=tokenizer),
         grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir,
@@ -168,17 +167,9 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     distillation_trainer = providers.Factory(
         DistillationTrainer,
-         criterion=providers.Factory(DistillationLoss, **config.training.gradient_based.distillation.loss.to_dict(), tokenizer=tokenizer),
+         criterion=providers.Factory(DistillationLoss, **(config.training.gradient_based.distillation.loss.to_dict() or {}), tokenizer=tokenizer),
         grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         use_amp=config.training.gradient_based.use_amp,
-        log_dir=config.training.log_dir,
-        meta_cognitive_snn=meta_cognitive_snn,
-    )
-    physics_informed_trainer = providers.Factory(
-        PhysicsInformedTrainer,
-         criterion=providers.Factory(PhysicsInformedLoss, **config.training.physics_informed.loss.to_dict(), tokenizer=tokenizer),
-        grad_clip_norm=config.training.physics_informed.grad_clip_norm,
-        use_amp=config.training.physics_informed.use_amp,
         log_dir=config.training.log_dir,
         meta_cognitive_snn=meta_cognitive_snn,
     )
@@ -192,6 +183,14 @@ class TrainingContainer(containers.DeclarativeContainer):
         epochs=config.training.epochs,
         warmup_epochs=config.training.physics_informed.warmup_epochs,
     )
+    physics_informed_trainer = providers.Factory(
+        PhysicsInformedTrainer,
+         criterion=providers.Factory(PhysicsInformedLoss, **(config.training.physics_informed.loss.to_dict() or {}), tokenizer=tokenizer),
+        grad_clip_norm=config.training.physics_informed.grad_clip_norm,
+        use_amp=config.training.physics_informed.use_amp,
+        log_dir=config.training.log_dir,
+        meta_cognitive_snn=meta_cognitive_snn,
+    )
     bio_rl_trainer = providers.Factory(
         BioRLTrainer,
         agent=providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device),
@@ -204,6 +203,7 @@ class TrainingContainer(containers.DeclarativeContainer):
         device=device,
     )
 
+
     # === 学習可能プランナー (PlannerSNN) のためのプロバイダ ===
     planner_snn = providers.Factory(
         PlannerSNN, vocab_size=providers.Callable(len, tokenizer), d_model=config.model.d_model,
@@ -215,8 +215,6 @@ class TrainingContainer(containers.DeclarativeContainer):
     planner_optimizer = providers.Factory(AdamW, lr=config.training.planner.learning_rate)
     planner_loss = providers.Factory(PlannerLoss)
 
-    # (省略: RedisとModelRegistryのプロバイダは変更なし)
-    # ...
     model_registry = providers.Selector(
         providers.Callable(lambda cfg: cfg.get("model_registry", {}).get("provider"), config.provided),
         file=providers.Singleton(
