@@ -25,54 +25,54 @@
 [a futuristic brain-computer interface diagramの画像](https://encrypted-tbn2.gstatic.com/licensed-image?q=tbn:ANd9GcTt92IEEquUiQtvr3obBB04xafmi43JxXCoNuXk9KslzBSAIQFpqz_q75BvAhaq0pegjnSQcb6R921Z1RI_De5wrnfOLp0rKlwyoT4RtJgNKZZDDqg)
 
 ```mermaid
-graph TD  
-    subgraph "User Interface"  
-        CLI\["snn-cli.py\<br/\>統合CLIツール"\]  
+graph TD
+    subgraph UserInterface["User Interface"]
+        CLI["snn-cli.py<br/>統合CLIツール"]
     end
 
-    subgraph "Orchestration Layer (エージェント層)"  
-        LifeForm\["DigitalLifeForm\<br/\>(デジタル生命体)"\]  
-        Autonomous\["AutonomousAgent\<br/\>(タスク実行・Web学習)"\]  
-        Evolving\["SelfEvolvingAgent\<br/\>(自己進化)"\]  
-        RL\["ReinforcementLearnerAgent\<br/\>(強化学習)"\]  
+    subgraph OrchestrationLayer["Orchestration Layer エージェント層"]
+        LifeForm["DigitalLifeForm<br/>デジタル生命体"]
+        Autonomous["AutonomousAgent<br/>タスク実行・Web学習"]
+        Evolving["SelfEvolvingAgent<br/>自己進化"]
+        RL["ReinforcementLearnerAgent<br/>強化学習"]
     end
 
-    subgraph "Cognitive Layer (高次認知層)"  
-        Planner\["HierarchicalPlanner\<br/\>(階層プランナー)"\]  
-        Brain\["ArtificialBrain\<br/\>(人工脳シミュレータ)"\]  
-        Memory\["Memory & RAG\<br/\>(長期記憶・知識検索)"\]  
+    subgraph CognitiveLayer["Cognitive Layer 高次認知層"]
+        Planner["HierarchicalPlanner<br/>階層プランナー"]
+        Brain["ArtificialBrain<br/>人工脳シミュレータ"]
+        Memory["Memory & RAG<br/>長期記憶・知識検索"]
     end
 
-    subgraph "Execution Layer (実行層)"  
-        Training\["train.py\<br/\>(学習パイプライン)"\]  
-        Inference\["SNNInferenceEngine\<br/\>(推論エンジン)"\]  
+    subgraph ExecutionLayer["Execution Layer 実行層"]
+        Training["train.py<br/>学習パイプライン"]
+        Inference["SNNInferenceEngine<br/>推論エンジン"]
     end
 
-    subgraph "Foundation Layer (基盤層)"  
-        Core\["SNN\_Core\<br/\>(Transformer, Mamba, HRM等)"\]  
-        Rules\["BioLearningRules\<br/\>(STDP, 因果追跡)"\]  
+    subgraph FoundationLayer["Foundation Layer 基盤層"]
+        Core["SNN_Core<br/>Transformer, Mamba, HRM等"]
+        Rules["BioLearningRules<br/>STDP, 因果追跡"]
     end
 
-    CLI \--\>|"solve"| Autonomous  
-    CLI \--\>|"evolve"| Evolving  
-    CLI \--\>|"rl"| RL  
-    CLI \--\>|"life-form"| LifeForm  
-    CLI \--\>|"planner"| Planner  
-    CLI \--\>|"brain"| Brain  
-    CLI \--\>|"gradient-train"| Training
+    CLI -->|"solve"| Autonomous
+    CLI -->|"evolve"| Evolving
+    CLI -->|"rl"| RL
+    CLI -->|"life-form"| LifeForm
+    CLI -->|"planner"| Planner
+    CLI -->|"brain"| Brain
+    CLI -->|"gradient-train"| Training
 
-    LifeForm \--\>|"指示"| Autonomous  
-    LifeForm \--\>|"指示"| Evolving  
-    LifeForm \--\>|"指示"| RL
+    LifeForm -->|"指示"| Autonomous
+    LifeForm -->|"指示"| Evolving
+    LifeForm -->|"指示"| RL
 
-    Autonomous \--\>|"計画を要求"| Planner  
-    Autonomous \--\>|"学習/推論を実行"| Training  
-    Autonomous \--\>|"学習/推論を実行"| Inference
+    Autonomous -->|"計画を要求"| Planner
+    Autonomous -->|"学習/推論を実行"| Training
+    Autonomous -->|"学習/推論を実行"| Inference
 
-    Planner \--\>|"記憶を検索"| Memory  
-    Training \--\>|"モデルを構築"| Core  
-    Inference \--\>|"モデルを利用"| Core  
-    Training \--\>|"学習則を利用"| Rules
+    Planner -->|"記憶を検索"| Memory
+    Training -->|"モデルを構築"| Core
+    Inference -->|"モデルを利用"| Core
+    Training -->|"学習則を利用"| Rules
 ```
 
 
