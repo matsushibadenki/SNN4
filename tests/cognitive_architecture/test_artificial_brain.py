@@ -1,9 +1,16 @@
 # ファイルパス: tests/cognitive_architecture/test_artificial_brain.py
-# (更新)
-# 修正: DIコンテナの階層構造に合わせて、rag_systemに正しくアクセスするよう修正。
-# 改善(v2): ロードマップ フェーズ5 に基づき、認知サイクル実行後の状態変化を
-#           具体的に検証するアサーションを追加。
-# 改善(v3): 記憶の固定化プロセスを検証するテストを追加。
+# タイトル: 人工脳 統合テスト
+# 機能説明:
+# - 人工脳（ArtificialBrain）の統合的な動作を検証する。
+# - DIコンテナ（BrainContainer）が全コンポーネントを正しく構築し、
+#   循環参照なしにArtificialBrainインスタンスを生成できることを確認する。
+# - 認知サイクルがエラーなく実行され、各認知モジュールが意図通りに連携し、
+#   状態を変化させることを検証する。特に、短期記憶から長期記憶への
+#   「記憶の固定」プロセスが正しく機能することを確認する。
+# 改善点(v4):
+# - ロードマップ フェーズ5に基づき、テストを「深化」。
+# - 認知サイクル実行後、入力テキストのキーワードが長期記憶に
+#   正しく関連付けられて格納されたかを具体的に検証するアサーションを追加。
 
 import sys
 from pathlib import Path
@@ -63,16 +70,17 @@ def test_cognitive_cycle_runs_and_consolidates_memory(brain_container: BrainCont
             brain.run_cognitive_cycle(text)
             # 5サイクル目に統合が起こることを確認
             if i < 4:
+                # サイクルごとに短期記憶が増える
                 assert len(brain.hippocampus.working_memory) == i + 1
             else:
-                # 5サイクル目にクリアされるはず
+                # 5サイクル目に長期記憶へ転送され、短期記憶はクリアされる
                 assert len(brain.hippocampus.working_memory) == 0
 
         print(f"✅ 5回の認知サイクルが正常に完了しました。")
     except Exception as e:
         pytest.fail(f"run_cognitive_cycleで予期せぬエラーが発生しました: {e}")
 
-    # 実行後の状態変化を検証
+    # --- 実行後の状態変化を詳細に検証 ---
     # 1. 海馬（短期記憶）がクリアされたか
     assert len(brain.hippocampus.working_memory) == 0, \
         "5サイクル後に海馬のワーキングメモリがクリアされていません。"
@@ -82,9 +90,18 @@ def test_cognitive_cycle_runs_and_consolidates_memory(brain_container: BrainCont
     assert final_cortex_size > initial_cortex_size, \
         "大脳皮質のナレッジグラフに新しい知識が追加されていません。"
         
-    # 3. 記録された知識の内容を簡易的に確認
-    knowledge = brain.cortex.retrieve_knowledge("system")
-    assert knowledge is not None
-    assert any(rel['target'] == 'integration' for rel in knowledge)
+    # 3. 記録された知識の内容を具体的に確認
+    # "A test about system integration" -> "system"と"integration"が関連付けられているはず
+    knowledge_system = brain.cortex.retrieve_knowledge("system")
+    assert knowledge_system is not None, "長期記憶から 'system' の知識を取得できませんでした。"
+    assert any(rel['relation'] == 'co-occurred_with' and rel['target'] == 'integration' for rel in knowledge_system), \
+        "'system' と 'integration' の関連性が記録されていません。"
         
-    print("✅ 記憶の固定化プロセスが正しく実行されたことを確認しました。")
+    # "memory and learning" -> "memory"と"learning"が関連付けられているはず
+    knowledge_memory = brain.cortex.retrieve_knowledge("memory")
+    assert knowledge_memory is not None, "長期記憶から 'memory' の知識を取得できませんでした。"
+    assert any(rel['relation'] == 'co-occurred_with' and rel['target'] == 'learning' for rel in knowledge_memory), \
+        "'memory' と 'learning' の関連性が記録されていません。"
+        
+    print("✅ 記憶の固定化プロセスと、その内容が正しく記録されたことを確認しました。")
+
