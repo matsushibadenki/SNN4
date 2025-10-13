@@ -203,7 +203,6 @@ class TrainingContainer(containers.DeclarativeContainer):
         device=device,
     )
 
-
     # === 学習可能プランナー (PlannerSNN) のためのプロバイダ ===
     planner_snn = providers.Factory(
         PlannerSNN, vocab_size=providers.Callable(len, tokenizer), d_model=config.model.d_model,
