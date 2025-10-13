@@ -21,7 +21,7 @@
 
 **目的:** 現在抽象化されている認知モジュールを、設計書で描かれた、より現実に即した高性能な実装に置き換える。
 
-### **フェーズ1：高忠実度な知覚 (High-Fidelity Perception)**
+### **フェーズ1：高忠実度な知覚 (High-Fidelity Perception) (完了)**
 
 * **目標:** 現在の単純な特徴抽出ロジックを持つPerceptionCortexを、SNNとCNN（畳み込みニューラルネットワーク）の長所を組み合わせた、高性能なハイブリッドモデルに置き換える。  
 * **主要技術:**  
@@ -32,7 +32,7 @@
   2. BrainContainerを修正し、PerceptionCortexのプロバイダを新しいHybridPerceptionCortexに切り替え可能にする。  
 * **達成指標:** イベントベースの視覚データセット（例: N-MNIST）において、現在のPerceptionCortexと比較して認識精度が大幅に向上する。
 
-### **フェーズ2：動的かつ情動的な意思決定 (Dynamic and Emotional Decision Making)**
+### **フェーズ2：動的かつ情動的な意思決定 (Dynamic and Emotional Decision Making) (完了)**
 
 * **目標:** Amygdala（扁桃体）によって評価された情動価を、BasalGanglia（大脳基底核）の行動選択プロセスに統合し、より文脈に応じた動的な意思決定を実現する。  
 * **主要技術:**  
@@ -43,7 +43,7 @@
   2. BasalGangliaのselect\_actionメソッドを拡張し、情動状態に応じて内部パラメータを調整するロジックを追加する。  
 * **達成指標:** 同じ状況でも、異なる情動状態（例: 快・不快）を与えることで、ArtificialBrainが異なる行動を選択することを確認する。
 
-### **フェーズ3：記憶の固定と能動的想起 (Memory Consolidation and Active Recall)**
+### **フェーズ3：記憶の固定と能動的想起 (Memory Consolidation and Active Recall) (完了)**
 
 * **目標:** Hippocampus（海馬）の短期記憶とCortex（大脳皮質）の長期記憶の連携を強化し、睡眠中などに起こる「記憶の固定」プロセスと、計画立案時に長期記憶を能動的に「想起」するプロセスをシミュレートする。  
 * **主要技術:**  
@@ -65,7 +65,7 @@
   1. snn-cli.pyに新しいサブコマンドグループbrainを追加する。  
   2. brain runコマンドを実装する。このコマンドは、内部でBrainContainerをセットアップし、run\_brain\_simulation.pyと同様の認知サイクルを、コマンドラインから与えられた単一の入力に対して実行する。  
   3. brain loopコマンドを実装し、複数の入力を対話的に与えながら認知サイクルを連続実行できるようにする。  
-* **達成指標:** run\_brain\_simulation.pyを直接実行することなく、snn-cli.py brain run \--input "some text"のようなコマンドでArtificialBrainの全機能が実行可能になる。
+* **達成指標:** run\_brain\_simulation.pyを直接実行することなく、snn-cli.py brain run \--input\_text "some text"のようなコマンドでArtificialBrainの全機能が実行可能になる。
 
 ### **フェーズ5：包括的なテストスイートの拡充 (Comprehensive Test Suite Expansion)**
 
