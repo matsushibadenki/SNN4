@@ -2,6 +2,8 @@
 # (修正)
 # 循環インポートエラーを解消するため、TYPE_CHECKINGを使用して
 # HierarchicalPlannerの型ヒントを解決する。
+# 修正(v2): 知識蒸留トレーナーをインスタンス化する際に、
+#          必須引数である `rank` を渡すように修正。
 
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
 import asyncio
@@ -38,15 +40,15 @@ class AutonomousAgent:
     自律的にタスクを実行するエージェントのベースクラス。
     """
     def __init__(
-        self, 
-        name: str, 
+        self,
+        name: str,
         # --- ▼ 修正 ▼ ---
-        planner: "HierarchicalPlanner", 
+        planner: "HierarchicalPlanner",
         # --- ▲ 修正 ▲ ---
-        model_registry: ModelRegistry, 
-        memory: AgentMemory, 
-        web_crawler: WebCrawler, 
-        accuracy_threshold: float = 0.6, 
+        model_registry: ModelRegistry,
+        memory: AgentMemory,
+        web_crawler: WebCrawler,
+        accuracy_threshold: float = 0.6,
         energy_budget: float = 10000.0
     ):
         self.name = name
@@ -69,7 +71,7 @@ class AutonomousAgent:
         if decoded_message and isinstance(decoded_message, dict) and "error" not in decoded_message:
             print(f"  - Decoded Intent: {decoded_message.get('intent')}")
             print(f"  - Decoded Payload: {decoded_message.get('payload')}")
-            
+
             self.memory.record_experience(
                 state=self.current_state,
                 action="receive_communication",
@@ -193,9 +195,9 @@ class AutonomousAgent:
         print("✍️ Summarizing content using internal summarization expert...")
         if not text:
             return ""
-            
+
         summarizer_expert = asyncio.run(self.find_expert("文章要約"))
-        
+
         if not summarizer_expert:
             print("⚠️ Summarization expert not found. Using basic extractive summary.")
             sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
@@ -246,12 +248,15 @@ class AutonomousAgent:
                 optimizer = container.optimizer(params=student_model.parameters())
                 scheduler = container.scheduler(optimizer=optimizer) if container.config.training.gradient_based.use_scheduler() else None
 
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
                 distillation_trainer = container.distillation_trainer(
                     model=student_model,
                     optimizer=optimizer,
                     scheduler=scheduler,
-                    device=device
+                    device=device,
+                    rank=-1  # 非分散学習のためrankを-1に設定
                 )
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
                 manager = KnowledgeDistillationManager(
                     student_model=student_model,
