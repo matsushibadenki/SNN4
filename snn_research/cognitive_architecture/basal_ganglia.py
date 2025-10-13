@@ -1,17 +1,11 @@
 # ファイルパス: snn_research/cognitive_architecture/basal_ganglia.py
-# (更新)
-#
-# Title: Basal Ganglia (大脳基底核) モジュール
-#
-# Description:
-# - 人工脳アーキテクチャの「価値評価層」に属し、行動選択を担うコンポーネント。
-# - 脳の直接路（Go）と間接路（NoGo）の機能を模倣し、複数の選択肢から
-#   最適な行動を決定する。
-# - Amygdalaなどから受け取った価値信号に基づき、最も価値の高い行動を選択し、
-#   競合する行動を抑制する。
-#
-# 改善点(v2):
-# - ROADMAPフェーズ2に基づき、情動に応じて意思決定の閾値を動的に調整する機能を追加。
+# タイトル: 大脳基底核：情動変調を伴う行動選択モジュール
+# 機能説明:
+# - 脳の直接路（Go）と間接路（NoGo）の機能を模倣し、複数の選択肢から最適な行動を決定する。
+# - Amygdalaから受け取った情動コンテキスト（快・不快、覚醒・沈静）に基づき、
+#   意思決定の閾値を動的に調整する。例えば、危険を察知した場合（不快・高覚醒）、
+#   より迅速に行動を起こせるように閾値を下げる。
+# - 実行ログを強化し、情動が意思決定に与えた影響を明確に表示するようにした。
 
 from typing import List, Dict, Any, Optional
 import torch
@@ -40,7 +34,7 @@ class BasalGanglia:
         arousal = emotion_context.get("arousal", 0.0)
         
         # 覚醒度が高いほど、閾値は下がり、より反応的になる
-        #  valenceが負（不快）の場合、その効果はさらに増幅される (危険回避など)
+        # valenceが負（不快）の場合、その効果はさらに増幅される (危険回避など)
         arousal_effect = -arousal * 0.2
         valence_effect = -valence * arousal * 0.1 # 不快で覚醒度が高いほど、さらに閾値を下げる
         
@@ -73,12 +67,15 @@ class BasalGanglia:
             Optional[Dict[str, Any]]: 選択された行動。どの行動も閾値に達しない場合はNone。
         """
         if not action_candidates:
+            print("🤔 大脳基底核: 行動候補が提示されませんでした。")
             return None
             
         current_threshold = self._modulate_threshold(emotion_context)
 
         # 各候補の価値をテンソルに変換
         values = torch.tensor([candidate.get('value', 0.0) for candidate in action_candidates])
+        print(f"  - 大脳基底核: 検討中の行動候補: {[c.get('action') for c in action_candidates]}, 価値: {[round(v.item(), 2) for v in values]}")
+
 
         # 1. 直接路 (Go Pathway) のシミュレーション:
         #    最も価値の高い行動を特定する。
@@ -89,7 +86,11 @@ class BasalGanglia:
         #    ここでは、勝者以外の活性を弱める形で簡易的に表現。
         inhibition_mask = torch.ones_like(values)
         winner_index = torch.argmax(values)
-        inhibition_mask[winner_index] = 1.0 - self.inhibition_strength
+        # 勝者以外のインデックスに抑制を適用
+        for i in range(len(inhibition_mask)):
+            if i != winner_index:
+                inhibition_mask[i] = 1.0 - self.inhibition_strength
+
 
         # 最終的な行動活性を計算
         final_activation = winner_takes_all * inhibition_mask
@@ -99,8 +100,8 @@ class BasalGanglia:
         best_action_index = torch.argmax(final_activation)
         if final_activation[best_action_index] >= current_threshold:
             selected_action = action_candidates[best_action_index]
-            print(f"🏆 行動選択: '{selected_action.get('action')}' (活性値: {final_activation[best_action_index]:.2f})")
+            print(f"🏆 行動選択: '{selected_action.get('action')}' (活性値: {final_activation[best_action_index]:.2f}, 閾値: {current_threshold:.2f})")
             return selected_action
         else:
-            print(f"🤔 行動棄却: どの行動も実行閾値 ({current_threshold:.2f}) に達しませんでした。")
+            print(f"🤔 行動棄却: どの行動も実行閾値 ({current_threshold:.2f}) に達しませんでした。(最大活性値: {final_activation.max():.2f})")
             return None
