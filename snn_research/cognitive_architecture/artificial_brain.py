@@ -168,4 +168,15 @@ class ArtificialBrain:
         )
         print(f"  - Motivation metrics updated: error={prediction_error:.2f}, success={success_rate:.2f}, similarity={task_similarity:.2f}")
 
+        # 7. 記憶の固定化 (5サイクルごと)
+        if self.cycle_count % 5 == 0:
+            self.consolidate_memories()
+
         print("--- ✅ 認知サイクル完了 ---")
+
+    def consolidate_memories(self):
+        """海馬から大脳皮質へ記憶を固定するプロセス。"""
+        print("💾 記憶の固定化プロセスを開始...")
+        episodes = self.hippocampus.get_and_clear_episodes_for_consolidation()
+        for episode in episodes:
+            self.cortex.consolidate_memory(episode)
