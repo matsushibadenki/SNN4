@@ -1,82 +1,89 @@
-# **Project SNN: A Predictive Digital Life Form (v6.0)**
+# **Project SNN: A Predictive Digital Life Form (v8.0)**
 
 ## **1\. 概要**
 
-本プロジェクトは、スパイキングニューラルネットワーク（SNN）技術を基盤とし、**自律的デジタル生命体 (Autonomous Digital Life Form)** の創造を目指す研究開発フレームワークです。
+本プロジェクトは、スパイキングニューラルネットワーク（SNN）技術を基盤とし、**自律的デジタル生命体 (Autonomous Digital Life Form)** の創造を目指す、次世代のAI研究開発フレームワークです。
 
-最終目標は、静的なパターン認識の限界を超え、世界の動的なモデルを内的に構築し、**未来を予測し、その予測誤差を最小化する**という自己の存在理由に基づき、自律的に思考し、学習し、自己を改良するAIを実現することです。
+我々のビジョンは、静的なパターン認識の限界を超え、世界の動的なモデルを内的に構築することにあります。**未来を予測し、その予測誤差を最小化する**という自己の存在理由に基づき、自律的に思考し、学習し、さらには自らのアーキテクチャや学習戦略さえも進化させるAIの実現を目標としています。
 
 このシステムは、単なるチャットボットではなく、以下の高度な認知能力を備えた自律エージェントとして動作します。
 
-* **先進的なSNNアーキテクチャ:** 脳の働きに着想を得た**予測符号化モデル**、時間情報処理能力を最大化する**スパイキングトランスフォーマー**、長文脈処理に革命をもたらす**スパイキングMAMBA**に加え、脳の情報処理階層を模倣する\*\*階層的循環記憶（Spiking-HRM）\*\*モデルを導入。これにより、短期的な情報と長期的な文脈を統合し、より深い未来予測を実現します。  
-* **オンデマンド学習:** 未知のタスクに直面した際、Web検索でリアルタイムに情報を収集したり、大規模言語モデルから知識を蒸留したりして、タスクに特化した超省エネルギーな「専門家SNN」を自律的に生成します。  
-* **自己認識と計画立案:** 自身の能力（学習済み専門家モデル）と記憶（過去の経験）を把握し、学習済みのプランナーSNNを用いて、複雑なタスクをサブタスクに分解し、最適な実行計画を動的に推論します。  
-* **アーキテクチャレベルの自己進化:** 自らの性能を評価し、表現力不足と判断した場合、自身のソースコード（モデルの層数や次元数、さらには学習パラダイム自体）を自律的に修正し、より強力なアーキテクチャへと進化します。  
-* **行動を通じた学習（強化学習）:** バックプロパゲーションを使わない生物学的な学習則（報酬変調型STDP）を用い、環境との試行錯誤から直接スキルを学習する能力を持ちます。
+* **🧠 先進的なSNNアーキテクチャ:** 脳の働きに着想を得た**予測符号化モデル**、時間情報処理能力を最大化する**スパイキングトランスフォーマー**、長文脈処理に革命をもたらす**スパイキングMAMBA**、そして脳の情報処理階層を模倣する\*\*階層的循環記憶（Spiking-HRM）\*\*モデルを実装しています。  
+* **📚 オンデマンド学習:** 未知のタスクに直面した際、Web検索でリアルタイムに情報を収集したり、大規模言語モデルから知識を蒸留したりして、タスクに特化した超省エネルギーな「専門家SNN」を自律的に生成します。  
+* **🗺️ 自己認識と計画立案:** 自身の能力（学習済み専門家モデル）と記憶（過去の経験）を把握し、学習済みのプランナーSNNを用いて、複雑なタスクをサブタスクに分解し、最適な実行計画を動的に推論します。  
+* **🧬 アーキテクチャレベルの自己進化:** 自らの性能を評価し、表現力不足と判断した場合、自身のソースコード（モデルの層数や次元数、さらには学習パラダイム自体）を自律的に修正し、より強力なアーキテクチャへと進化します。  
+* **🕹️ 行動を通じた学習（強化学習）:** バックプロパゲーションに依存しない生物学的な学習則（報酬変調型STDP）を用い、環境との試行錯誤から直接スキルを学習する能力を持ちます。
 
 ## **2\. システムアーキテクチャ**
 
-本システムの認知アーキテクチャは、統合CLIツール snn-cli.py を起点とし、各コマンドが対応する認知機能を呼び出す形で構成されています。
+本システムの認知アーキテクチャは、統合CLIツール snn-cli.py を起点とし、各コマンドが対応する認知機能を呼び出す形で構成されています。脳のように、特化した機能を持つモジュール群が協調して動作します。
+
+[a futuristic brain-computer interface diagramの画像](https://encrypted-tbn2.gstatic.com/licensed-image?q=tbn:ANd9GcTYjCQ6kT2qfTb_JB6rwRb--yNNC5S3sxvoC0v-GdNa4uSEY2of4phiOPecxAS4GBhE4Af6snjHsWqbWW1cdMlcDSuhme-5S0CYDE0Sr-9rhU6VlPs)
 
 ```mermaid
-graph TD  
+graph TD
+    %% Nodes
     CLI["snn-cli.py<br/>統合CLIツール"]
-    
-    subgraph Orchestration["自律実行と思考のオーケストレーション"]
-        LifeForm["DigitalLifeForm<br/>(デジタル生命体)"]  
-        Motivation["内発的動機システム"]  
-        MetaCognition["メタ認知SNN"]  
+
+    %% Orchestration Layer
+    subgraph Orchestration_Layer["Orchestration Layer"]
+        LifeForm["DigitalLifeForm<br/>(デジタル生命体)"]
         Agent_Autonomous["AutonomousAgent<br/>(タスク実行・Web学習)"]
         Agent_SelfEvolving["SelfEvolvingAgent<br/>(自己進化)"]
         Agent_RL["ReinforcementLearnerAgent<br/>(強化学習)"]
-        
-        LifeForm -->|"思考・行動を<br/>オーケストレーション"| Agent_Autonomous
-        LifeForm -->|"思考・行動を<br/>オーケストレーション"| Agent_SelfEvolving
-        LifeForm -->|"思考・行動を<br/>オーケストレーション"| Agent_RL
-        LifeForm -->|"内部状態を監視"| Motivation
-        LifeForm -->|"パフォーマンスを評価"| MetaCognition
+        Motivation["内発的動機システム"]
+        MetaCognition["メタ認知SNN"]
     end
-    
-    subgraph Cognition["高次認知機能"]
-        Planner["HierarchicalPlanner<br/>(階層プランナー)"]  
-        Memory["Memory<br/>(RAG連携 長期記憶)"]  
-        RAG["RAGSystem<br/>(ベクトル検索)"]
-        
-        Planner -->|"記憶を検索"| Memory
-        Memory -->|"ベクトル検索を利用"| RAG
-    end
-    
-    subgraph Engine["中核エンジン：学習と推論"]
-        TrainPy["train.py<br/>(学習パイプライン)"]  
-        SNN_Core["SNN_Core<br/>(Transformer, Mamba, HRM等)"]  
-        BioRules["生物学的学習則<br/>(STDP, 因果追跡)"]  
-        InferenceEngine["SNNInferenceEngine<br/>(推論エンジン)"]
-        
-        TrainPy -->|"モデルを訓練"| SNN_Core
-        TrainPy -->|"学習則を利用"| BioRules
-        InferenceEngine -->|"モデルをロード"| SNN_Core
-    end
-    
-    CLI -->|"life-form start"| LifeForm
-    CLI -->|"agent solve"| Agent_Autonomous
-    CLI -->|"evolve run"| Agent_SelfEvolving
-    CLI -->|"rl run"| Agent_RL
-    CLI -->|"planner execute"| Planner
-    CLI -->|"gradient-train"| TrainPy
-    
-    classDef cli fill:#b39ddb,stroke:#333,stroke-width:3px,color:#fff
-    classDef orchestrator fill:#cde4ff,stroke:#333,stroke-width:2px
-    classDef agent fill:#d4edda,stroke:#333,stroke-width:1px
-    classDef cognition fill:#ffe4c4,stroke:#333,stroke-width:1px
-    classDef engine fill:#f8d7da,stroke:#333,stroke-width:1px
-    
-    class CLI cli
-    class LifeForm,Motivation,MetaCognition orchestrator
-    class Agent_Autonomous,Agent_SelfEvolving,Agent_RL agent
-    class Planner,Memory,RAG cognition
-    class TrainPy,SNN_Core,BioRules,InferenceEngine engine
-```
 
+    %% Cognitive Layer
+    subgraph Cognitive_Layer["Cognitive Layer"]
+        Planner["HierarchicalPlanner<br/>(階層プランナー)"]
+        Memory["Memory<br/>(RAG連携 長期記憶)"]
+        RAG["RAGSystem<br/>(ベクトル検索)"]
+    end
+
+    %% Core Engine Layer
+    subgraph Core_Engine_Layer["Core Engine Layer"]
+        TrainPy["train.py<br/>(学習パイプライン)"]
+        SNN_Core["SNN_Core<br/>(Transformer, Mamba, HRM等)"]
+        BioRules["生物学的学習則<br/>(STDP, 因果追跡)"]
+        InferenceEngine["SNNInferenceEngine<br/>(推論エンジン)"]
+    end
+
+    %% Links between nodes
+    LifeForm -->|思考・行動を<br/>オーケストレーション| Agent_Autonomous
+    LifeForm -->|思考・行動を<br/>オーケストレーション| Agent_SelfEvolving
+    LifeForm -->|思考・行動を<br/>オーケストレーション| Agent_RL
+    LifeForm -->|内部状態を監視| Motivation
+    LifeForm -->|パフォーマンスを評価| MetaCognition
+
+    Planner -->|記憶を検索| Memory
+    Memory -->|ベクトル検索を利用| RAG
+
+    TrainPy -->|モデルを訓練| SNN_Core
+    TrainPy -->|学習則を利用| BioRules
+    InferenceEngine -->|モデルをロード| SNN_Core
+
+    CLI -->|life-form start| LifeForm
+    CLI -->|agent solve| Agent_Autonomous
+    CLI -->|evolve run| Agent_SelfEvolving
+    CLI -->|rl run| Agent_RL
+    CLI -->|planner execute| Planner
+    CLI -->|gradient-train| TrainPy
+
+    %% Styling
+    classDef cli fill:#b39ddb,stroke:#333,stroke-width:3px,color:#fff;
+    classDef orchestrator fill:#cde4ff,stroke:#333,stroke-width:2px;
+    classDef agent fill:#d4edda,stroke:#333,stroke-width:1px;
+    classDef cognition fill:#ffe4c4,stroke:#333,stroke-width:1px;
+    classDef engine fill:#f8d7da,stroke:#333,stroke-width:1px;
+
+    class CLI cli;
+    class LifeForm,Motivation,MetaCognition orchestrator;
+    class Agent_Autonomous,Agent_SelfEvolving,Agent_RL agent;
+    class Planner,Memory,RAG cognition;
+    class TrainPy,SNN_Core,BioRules,InferenceEngine engine;
+```
 
 ## **3\. システムの実行方法**
 
@@ -116,17 +123,31 @@ python scripts/data\_preparation.py
 
 #### **ステップ4-2: 本格的な学習の実行**
 
-準備した大規模データセットを使い、汎用的な言語能力を持つ専門家モデル「汎用言語モデル」を育成します。
+**A) 推奨：最強エンジン（Ultraモデル）の学習**
+
+以下のコマンド一つで、データ準備から最大規模のSpiking Transformerモデルの学習までを自動的に実行します。これがプロジェクトの性能を最大限に引き出すための推奨プロセスです。
+
+python snn-cli.py train-ultra \--override\_config "training.epochs=50"
+
+**B) 通常モデルの学習**
+
+特定のモデル構成で学習させたい場合は、従来通りagent solveコマンドを使用します。
 
 python snn-cli.py agent solve \\  
     \--task "汎用言語モデル" \\  
     \--force-retrain
 
-**Note:** この学習はマシンスペックにより数時間以上かかる可能性があります。
+**Note:** これらの学習はマシンスペックにより数時間以上かかる可能性があります。
 
 #### **ステップ4-3: 学習済みモデルとの対話**
 
-上記の本格的な学習で育成した「汎用言語モデル」を呼び出して対話します。
+学習済みのモデルを呼び出して対話します。--model\_configで使用したいモデルの設定ファイルを指定してください。
+
+**A) 最強エンジン（Ultraモデル）との対話**
+
+python snn-cli.py ui start \--model\_config configs/models/ultra.yaml
+
+**B) 通常モデルとの対話**
 
 python snn-cli.py agent solve \\  
     \--task "汎用言語モデル" \\  
@@ -134,7 +155,7 @@ python snn-cli.py agent solve \\
 
 ### **ステップ5: その他の高度な機能**
 
-その他の高度な機能（Webからの自律学習、自己進化、強化学習など）については、doc/SNN開発：プロジェクト機能テスト コマンド一覧.md をご参照ください。
+その他の高度な機能（Webからの自律学習、自己進化、強化学習など）については、doc/SNN開発：プロジェクト機能テスト コマンド一覧.md をご参照ください。
 
 ## **4\. プロジェクト構造**
 
