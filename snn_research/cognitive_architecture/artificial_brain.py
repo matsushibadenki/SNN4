@@ -6,6 +6,7 @@
 # - Amygdalaからの情動出力をBasalGangliaに伝達し、行動選択の閾値を動的に変化させる。
 # - 一定サイクルごとにHippocampusの短期記憶をCortexの長期記憶へと「固定化」する。
 # - 計画立案時にCortexから関連知識を「能動的に想起」し、プランナーの文脈情報として活用する。
+# 修正点: mypyエラー `Need type annotation for "candidates"` を解消するため、型ヒントを追加。
 
 from typing import Dict, Any, List
 import asyncio
@@ -146,7 +147,7 @@ class ArtificialBrain:
 
     def _convert_plan_to_candidates(self, plan) -> List[Dict[str, Any]]:
         """プランナーからの計画を、大脳基底核が解釈できる行動候補リストに変換する。"""
-        candidates = []
+        candidates: List[Dict[str, Any]] = []
         if not plan or not plan.task_list:
             return candidates
             
@@ -158,3 +159,4 @@ class ArtificialBrain:
                 'duration': 1.0 # デフォルトの持続時間
             })
         return candidates
+
