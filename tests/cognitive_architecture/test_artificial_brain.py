@@ -69,9 +69,9 @@ def test_cognitive_cycle_runs_and_consolidates_memory(brain_container: BrainCont
         for i, text in enumerate(test_inputs):
             brain.run_cognitive_cycle(text)
             # 5サイクル目に統合が起こることを確認
-            if i < 4:
+            if (i + 1) % 5 != 0:
                 # サイクルごとに短期記憶が増える
-                assert len(brain.hippocampus.working_memory) == i + 1
+                assert len(brain.hippocampus.working_memory) == (i + 1) % 5
             else:
                 # 5サイクル目に長期記憶へ転送され、短期記憶はクリアされる
                 assert len(brain.hippocampus.working_memory) == 0
@@ -104,4 +104,3 @@ def test_cognitive_cycle_runs_and_consolidates_memory(brain_container: BrainCont
         "'memory' と 'learning' の関連性が記録されていません。"
         
     print("✅ 記憶の固定化プロセスと、その内容が正しく記録されたことを確認しました。")
-
