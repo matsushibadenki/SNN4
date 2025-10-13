@@ -203,11 +203,11 @@ class TrainingContainer(containers.DeclarativeContainer):
     physics_informed_trainer = providers.Factory(
         PhysicsInformedTrainer,
          criterion=providers.Factory(
-            PhysicsInformedLoss,
-            ce_weight=config.training.physics_informed.loss.ce_weight,
-            spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight,
-            mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight,
-            tokenizer=tokenizer,
+             PhysicsInformedLoss,
+             ce_weight=config.training.physics_informed.loss.ce_weight,
+             spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight,
+             mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight,
+             tokenizer=tokenizer,
          ),
         grad_clip_norm=config.training.physics_informed.grad_clip_norm,
         use_amp=config.training.physics_informed.use_amp,
