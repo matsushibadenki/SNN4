@@ -67,7 +67,7 @@
   3. brain loopコマンドを実装し、複数の入力を対話的に与えながら認知サイクルを連続実行できるようにする。  
 * **達成指標:** run\_brain\_simulation.pyを直接実行することなく、snn-cli.py brain run \--input\_text "some text"のようなコマンドでArtificialBrainの全機能が実行可能になる。
 
-### **フェーズ5：包括的なテストスイートの拡充 (Comprehensive Test Suite Expansion)**
+### **フェーズ5：包括的なテストスイートの拡充 (Comprehensive Test Suite Expansion) (完了)**
 
 * **目標:** プロジェクトの信頼性を保証するため、テストカバレッジを大幅に向上させ、システムの安定性を確保する。  
 * **主要技術:** pytestおよびpytest-covカバレッジ測定ツール。  
