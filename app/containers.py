@@ -1,20 +1,8 @@
-# matsibadenki/snn3/app/containers.py
-# (修正)
-# 修正: mypyエラー 'Name is not defined' を解消するため、
-#       不足しているすべてのモジュールのインポート文を追加。
-# 修正: PlannerSNNのインスタンス生成時の依存関係の解決方法を修正し、
-#       設定値がNoneになる問題を解消。
-# 修正(v2): ImportErrorを解消するため、TASK_REGISTRYのプロバイダを追加。
-# 修正(v3): 循環参照エラー解消のため、インポート元を修正。
-#
-# 改善点(v4):
-# - 因果推論エンジン(CausalInferenceEngine)をBrainContainerに統合。
-# - GlobalWorkspaceとRAGSystemを依存性として注入。
-# - ArtificialBrainのコンストラクタにもcausal_inference_engineを追加。
-#
-# 改善点(v5):
-# - 内発的動機付けシステム(IntrinsicMotivationSystem)をBrainContainerに統合。
-# - ArtificialBrainとPrefrontalCortexに依存性として注入。
+# ファイルパス: app/containers.py
+# (更新)
+# 改善点:
+# - DigitalLifeFormが計画立案機能を利用できるよう、
+#   HierarchicalPlannerを依存性として注入するように修正。
 
 import torch
 from dependency_injector import containers, providers
@@ -121,9 +109,14 @@ def _load_planner_snn_factory(planner_snn_instance, model_path: str, device: str
     return model.to(device)
 
 
-class TrainingContainer(containers.DeclarativeContainer):
-    """学習に関連するオブジェクトの依存関係を管理するコンテナ。"""
+class BrainContainer(containers.DeclarativeContainer):
+    """人工脳（ArtificialBrain）とその全コンポーネントの依存関係を管理するコンテナ。"""
     config = providers.Configuration()
+    agent_container = providers.Container(AgentContainer, config=config)
+    app_container = providers.Container(AppContainer, config=config)
+
+    global_workspace = providers.Singleton(GlobalWorkspace, model_registry=agent_container.model_registry)
+    motivation_system = providers.Singleton(IntrinsicMotivationSystem)
 
     # --- Benchmark Task Registry ---
     task_registry = providers.Object(TASK_REGISTRY)
@@ -420,13 +413,16 @@ class BrainContainer(containers.DeclarativeContainer):
 
     digital_life_form = providers.Singleton(
         DigitalLifeForm,
+        # HierarchicalPlannerを注入
+        planner=agent_container.hierarchical_planner,
         autonomous_agent=autonomous_agent,
         rl_agent=rl_agent,
         self_evolving_agent=self_evolving_agent,
-        motivation_system=providers.Singleton(IntrinsicMotivationSystem),
+        motivation_system=motivation_system,
         meta_cognitive_snn=providers.Singleton(MetaCognitiveSNN),
         memory=agent_container.memory,
         physics_evaluator=providers.Singleton(PhysicsEvaluator),
         symbol_grounding=providers.Singleton(SymbolGrounding, rag_system=agent_container.rag_system),
-        langchain_adapter=app_container.langchain_adapter
+        langchain_adapter=app_container.langchain_adapter,
+        global_workspace=global_workspace
     )
