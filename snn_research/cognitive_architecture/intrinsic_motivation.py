@@ -1,6 +1,6 @@
 # ファイルパス: snn_research/cognitive_architecture/intrinsic_motivation.py
 # (修正)
-# mypyエラー[var-annotated]を解消するため、dequeの型ヒントを追加。
+# mypyエラー[return-value]を解消するため、numpy.mean()の戻り値をfloat()でキャスト。
 
 import numpy as np
 from collections import deque
@@ -11,12 +11,10 @@ class IntrinsicMotivationSystem:
     エージェントの内部状態（好奇心、自信、退屈）と、その源泉を管理するシステム。
     """
     def __init__(self, history_length: int = 100):
-        # --- ▼ 修正 ▼ ---
         self.prediction_errors: Deque[float] = deque(maxlen=history_length)
         self.task_success_rates: Deque[float] = deque(maxlen=history_length)
         self.task_similarities: Deque[float] = deque(maxlen=history_length)
         self.loss_history: Deque[float] = deque(maxlen=history_length)
-        # --- ▲ 修正 ▲ ---
         self.curiosity_context: Optional[Any] = None
         self.max_prediction_error: float = 0.0
 
@@ -47,16 +45,29 @@ class IntrinsicMotivationSystem:
         return state
 
     def _calculate_curiosity(self) -> float:
+        """
+        好奇心を計算する。予測誤差の平均値として定義。
+        """
         if not self.prediction_errors:
             return 0.5
-        return np.mean(self.prediction_errors)
+        # --- ▼ 修正 ▼ ---
+        return float(np.mean(self.prediction_errors))
+        # --- ▲ 修正 ▲ ---
 
     def _calculate_confidence(self) -> float:
+        """
+        自信を計算する。タスクの成功率の平均値として定義。
+        """
         if not self.task_success_rates:
             return 0.5
-        return np.mean(self.task_success_rates)
+        # --- ▼ 修正 ▼ ---
+        return float(np.mean(self.task_success_rates))
+        # --- ▲ 修正 ▲ ---
 
     def _calculate_boredom(self) -> float:
+        """
+        退屈を計算する。学習の停滞度とタスクの類似度から定義。
+        """
         if len(self.loss_history) < 2 or not self.task_similarities:
             return 0.0
 
