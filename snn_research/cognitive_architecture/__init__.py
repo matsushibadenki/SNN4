@@ -17,11 +17,10 @@ from .hippocampus import Hippocampus
 from .cortex import Cortex
 from .prefrontal_cortex import PrefrontalCortex
 from .artificial_brain import ArtificialBrain
-from .perception_cortex import PerceptionCortex
-from .som_feature_map import SomFeatureMap
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 from .hybrid_perception_cortex import HybridPerceptionCortex
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from .som_feature_map import SomFeatureMap
+from .causal_inference_engine import CausalInferenceEngine
+
 
 
 __all__ = [
@@ -42,9 +41,7 @@ __all__ = [
     "Hippocampus",
     "Cortex",
     "PrefrontalCortex",
-    "PerceptionCortex",
+    "HybridPerceptionCortex",
     "SomFeatureMap",
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-    "HybridPerceptionCortex"
-    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    "CausalInferenceEngine"
 ]

@@ -10,6 +10,11 @@
 #              各モジュールからの誤差信号を競合させ、勝者となった情報を
 #              システム全体にブロードキャストする「意識」の仕組みを実装。
 # 修正点(v3): SpikeEncoderDecoderのAPI変更に伴い、メソッド呼び出しを修正。
+# 改善点(v4): 「意識的認知サイクル」実装のため、salienceスコアに基づき情報を競合させ、
+#              勝者となった情報をブロードキャストする機能を追加。
+#              - broadcastをupload_to_workspaceに改名し、salience引数を追加。
+#              - conscious_broadcast_cycleを改修し、最も顕著性の高い情報を選択・ブロードキャストするロジックを実装。
+
 
 from typing import Dict, Any, List, Callable, Optional, Tuple
 import random
@@ -30,30 +35,30 @@ class AttentionHub:
         self.history: List[str] = []
         self.inhibition_strength = inhibition_strength
 
-    def select_winner(self, error_signals: Dict[str, float]) -> Optional[str]:
+    def select_winner(self, salience_signals: Dict[str, float]) -> Optional[str]:
         """
-        誤差信号の大きさと過去の履歴に基づき、最も注意を向けるべき情報源（勝者）を選択する。
+        顕著性信号の大きさと過去の履歴に基づき、最も注意を向けるべき情報源（勝者）を選択する。
 
         Args:
-            error_signals (Dict[str, float]): 各モジュール名とその予測誤差の大きさ。
+            salience_signals (Dict[str, float]): 各モジュール名とその顕著性スコア。
 
         Returns:
             Optional[str]: 勝者となったモジュールの名前。
         """
-        if not error_signals:
+        if not salience_signals:
             return None
 
         # 過去に選択された情報源に抑制をかける (Inhibition of Return)
         adjusted_signals: Dict[str, float] = {}
-        for name, signal_strength in error_signals.items():
+        for name, signal_strength in salience_signals.items():
             inhibition = self._get_inhibition_factor(name)
             adjusted_signals[name] = signal_strength * (1 - inhibition)
             if inhibition > 0:
                 print(f"  - AttentionHub: '{name}' に抑制を適用 (抑制率: {inhibition:.2f})")
 
-        # 最も誤差が大きいモジュールを選択
+        # 最も顕著性が大きいモジュールを選択
         winner = max(adjusted_signals.items(), key=operator.itemgetter(1))[0]
-        print(f"🏆 AttentionHub: '{winner}' が注意を獲得しました (調整後誤差: {adjusted_signals[winner]:.4f})。")
+        print(f"🏆 AttentionHub: '{winner}' が注意を獲得しました (調整後顕著性: {adjusted_signals[winner]:.4f})。")
 
         # 履歴を更新
         self.history.append(winner)
@@ -75,90 +80,77 @@ class GlobalWorkspace:
     """
     def __init__(self, model_registry: ModelRegistry):
         self.blackboard: Dict[str, Any] = {}
-        self.subscribers: Dict[str, List[Callable]] = {}
+        self.subscribers: List[Callable] = []
         self.model_registry = model_registry
         self.encoder_decoder = SpikeEncoderDecoder()
         self.attention_hub = AttentionHub()
         self.conscious_broadcast_content: Optional[Any] = None
 
-    def broadcast(self, source: str, data: Any, is_error_signal: bool = False, error_magnitude: float = 0.0):
+    def upload_to_workspace(self, source: str, data: Any, salience: float):
         """
-        情報をスパイクパターンにエンコードしてブラックボードに書き込む。
-        誤差信号の場合は、注意機構に通知する。
+        情報をブラックボードに書き込む（アップロードする）。
         """
-        print(f"[GlobalWorkspace] '{source}' から情報を受信...")
-        # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
-        # データをスパイクパターンにエンコード
-        spiked_data = self.encoder_decoder.encode_data(data)
-        # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
-            
-        self.blackboard[source] = {"data": spiked_data, "is_error": is_error_signal, "magnitude": error_magnitude}
+        print(f"[GlobalWorkspace] '{source}' から情報を受信 (顕著性: {salience:.2f})...")
+        self.blackboard[source] = {"data": data, "salience": salience}
 
     def conscious_broadcast_cycle(self):
         """
         意識的な情報処理サイクルを実行する。
-        1. 全モジュールから誤差信号を収集する。
+        1. 全モジュールから顕著性信号を収集する。
         2. 注意機構が最も重要な情報（勝者）を選択する。
         3. 勝者の情報をシステム全体にブロードキャストする。
         """
         print("\n--- 意識的ブロードキャストサイクル開始 ---")
-        # 1. 誤差信号を収集
-        error_signals = {
-            source: info["magnitude"]
+        if not self.blackboard:
+            print("  - ブラックボードに情報がありません。")
+            self.conscious_broadcast_content = None
+            return
+            
+        # 1. 顕著性信号を収集
+        salience_signals = {
+            source: info["salience"]
             for source, info in self.blackboard.items()
-            if info["is_error"]
         }
-        print(f"  - 収集された誤差信号: {error_signals}")
+        print(f"  - 収集された顕著性信号: {salience_signals}")
 
         # 2. 注意を向ける勝者を選択
-        winner = self.attention_hub.select_winner(error_signals)
+        winner = self.attention_hub.select_winner(salience_signals)
 
         if winner and winner in self.blackboard:
             # 3. 勝者の情報をデコードしてブロードキャスト
-            winner_info = self.get_information(winner)
-            self.conscious_broadcast_content = winner_info
+            winner_info = self.blackboard[winner]
+            self.conscious_broadcast_content = winner_info['data']
             print(f"📡 意識的ブロードキャスト: '{winner}' からの情報を全システムに伝達します。")
-            self._notify_subscribers(winner, winner_info)
+            self._notify_subscribers(winner, self.conscious_broadcast_content)
         else:
             print("  - ブロードキャストするべき支配的な情報はありませんでした。")
+            self.conscious_broadcast_content = None
         
+        # サイクル終了後、ブラックボードをクリア
+        self.blackboard.clear()
         print("--- 意識的ブロードキャストサイクル終了 ---\n")
 
-    def subscribe(self, source: str, callback: Callable):
-        """特定のソースからの情報更新を購読する。"""
-        if source not in self.subscribers:
-            self.subscribers[source] = []
-        self.subscribers[source].append(callback)
+    def subscribe(self, callback: Callable):
+        """情報更新を購読するコールバックを登録する。"""
+        self.subscribers.append(callback)
 
-    def _notify_subscribers(self, source: str, decoded_info: Any):
-        """更新があったソースの購読者に通知する。"""
-        if source in self.subscribers:
-            for callback in self.subscribers[source]:
-                try:
-                    callback(source, decoded_info)
-                except Exception as e:
-                    print(f"Error notifying subscriber for '{source}': {e}")
+    def _notify_subscribers(self, source: str, conscious_info: Any):
+        """全ての購読者に通知する。"""
+        for callback in self.subscribers:
+            try:
+                callback(source, conscious_info)
+            except Exception as e:
+                print(f"Error notifying subscriber {callback.__name__} for '{source}': {e}")
 
     def get_information(self, source: str) -> Any:
         """
-        ブラックボードからスパイクパターンを取得し、デコードして返す。
+        ブラックボードから情報を取得する（デコードは不要）。
         """
         source_info = self.blackboard.get(source)
-        if source_info is None:
-            return None
-        
-        spiked_data = source_info["data"]
-        
-        # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
-        # 汎用的なデコードメソッドを使用
-        return self.encoder_decoder.decode_data(spiked_data)
-        # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
+        return source_info['data'] if source_info else None
 
     def get_full_context(self) -> Dict[str, Any]:
         """
-        現在のワークスペースの全コンテキストをデコードして取得する。
+        現在のワークスペースの全コンテキストを取得する。
         """
-        decoded_context: Dict[str, Any] = {}
-        for source in self.blackboard:
-            decoded_context[source] = self.get_information(source)
-        return decoded_context
+        return {source: info['data'] for source, info in self.blackboard.items()}

@@ -14,6 +14,15 @@
 # 修正点 (v11):
 # - pytestで発生した循環インポートエラーを解消するため、BioRLTrainerとGridWorldEnvの
 #   トップレベルインポートを削除し、メソッド内での局所インポートに修正。
+#
+# 改善点 (v12):
+# - AIの最高意思決定機関として完成させる。
+# - _decide_next_actionを決定論的な選択に変更。
+# - _execute_actionに各エージェントの実際のメソッド呼び出しを実装。
+# - life_cycle_stepをループ実行するawareness_loopと、自己言及のためのexplain_last_actionを追加。
+#
+# 修正点 (v13):
+# - mypyエラー[name-defined]を解消するため、osモジュールをインポート。
 
 import time
 import logging
@@ -22,6 +31,8 @@ import random
 import json
 import asyncio
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
+import operator
+import os
 
 from snn_research.cognitive_architecture.intrinsic_motivation import IntrinsicMotivationSystem
 from snn_research.cognitive_architecture.meta_cognitive_snn import MetaCognitiveSNN
@@ -35,10 +46,6 @@ from snn_research.cognitive_architecture.hierarchical_planner import Hierarchica
 from snn_research.distillation.model_registry import DistributedModelRegistry
 
 # --- 循環インポート解消のための修正 ---
-# from snn_research.rl_env.grid_world import GridWorldEnv
-# from snn_research.training.bio_trainer import BioRLTrainer
-
-# 型チェック時のみインポートを実行する
 if TYPE_CHECKING:
     from app.adapters.snn_langchain_adapter import SNNLangChainAdapter
     from snn_research.training.bio_trainer import BioRLTrainer
@@ -169,19 +176,10 @@ class DigitalLifeForm:
 
         action_scores["practice_skill_with_rl"] += 1.0
 
-        actions = list(action_scores.keys())
-        scores = [max(0, s) for s in action_scores.values()]
-        total_score = sum(scores)
-
-        if total_score == 0:
-            chosen_action = "practice_skill_with_rl"
-        else:
-            probabilities = [s / total_score for s in scores]
-            chosen_action = random.choices(actions, weights=probabilities, k=1)[0]
+        # 最もスコアの高いアクションを決定論的に選択
+        chosen_action = max(action_scores.items(), key=operator.itemgetter(1))[0]
         
         logging.info(f"Action scores: {action_scores}")
-        if total_score > 0:
-            logging.info(f"Probabilities: { {a: f'{p:.2%}' for a, p in zip(actions, probabilities)} }")
         logging.info(f"Chosen action: {chosen_action}")
 
         return chosen_action
@@ -190,11 +188,8 @@ class DigitalLifeForm:
         """
         選択された行動に対応するエージェントの機能を実際に呼び出す。
         """
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
-        # 循環インポートを避けるため、メソッド内で局所的にインポート
         from snn_research.rl_env.grid_world import GridWorldEnv
         from snn_research.training.bio_trainer import BioRLTrainer
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         try:
             if action == "publish_successful_skill":
                 if isinstance(self.autonomous_agent.model_registry, DistributedModelRegistry):
@@ -264,9 +259,9 @@ class DigitalLifeForm:
         try:
             with open(self.memory.memory_path, "rb") as f:
                 try:
-                    f.seek(-2, 2)
+                    f.seek(-2, os.SEEK_END)
                     while f.read(1) != b'\n':
-                        f.seek(-2, 1)
+                        f.seek(-2, os.SEEK_CUR)
                 except OSError:
                     f.seek(0)
                 last_line = f.readline().decode()
@@ -300,3 +295,4 @@ class DigitalLifeForm:
         except Exception as e:
             logging.error(f"LLMによる自己言及の生成に失敗しました: {e}")
             return "エラー: 自己言及の生成に失敗しました。"
+

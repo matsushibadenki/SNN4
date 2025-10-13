@@ -1,4 +1,5 @@
 # ファイルパス: snn_research/cognitive_architecture/emergent_system.py
+# (修正)
 #
 # Title: 創発システム
 #
@@ -31,6 +32,9 @@
 #   `execution_result` がNoneでないことを明示的にチェックする処理を追加。
 #
 # 改善点 (v5): スパイクベースの通信タスクを実装。
+#
+# 修正点 (v6): mypyエラー[attr-defined]を解消するため、GlobalWorkspaceのAPI変更に合わせて
+#              broadcastメソッド呼び出しをupload_to_workspaceに変更。
 
 import asyncio
 from typing import List, Dict, Any, TYPE_CHECKING, Optional, Tuple
@@ -76,9 +80,15 @@ class EmergentCognitiveSystem:
         print(f"👀 Observer '{observer_agent.name}' makes an observation: {observation}")
         spike_message = observer_agent.spike_communicator.encode_data(observation)
         
-        # 2. 観測者がGlobalWorkspaceに情報をブロードキャスト
-        print(f"📢 Observer '{observer_agent.name}' broadcasts the finding to the Global Workspace.")
-        self.global_workspace.broadcast(source=observer_agent.name, data=observation) # ブロードキャストはデコードされたデータで
+        # 2. 観測者がGlobalWorkspaceに情報をアップロード
+        print(f"📢 Observer '{observer_agent.name}' uploads the finding to the Global Workspace.")
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.global_workspace.upload_to_workspace(
+            source=observer_agent.name, 
+            data=observation,
+            salience=0.8  # 発見は顕著性が高いと仮定
+        )
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         
         # 3. 受信者エージェントがスパイクメッセージを直接受信して処理
         #    (実際のシステムでは、GlobalWorkspace経由やP2Pで渡される)
@@ -133,7 +143,13 @@ class EmergentCognitiveSystem:
         print(f"--- Emergent System: Executing Goal: {high_level_goal} ---")
 
         plan = await self.planner.create_plan(high_level_goal)
-        self.global_workspace.broadcast("plan", f"New plan created: {plan.task_list}")
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.global_workspace.upload_to_workspace(
+            "planner",
+            f"New plan created: {plan.task_list}",
+            salience=0.7
+        )
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
         results = []
         task_queue = plan.task_list.copy()
@@ -169,11 +185,15 @@ class EmergentCognitiveSystem:
                 expert_id = execution_result.get('model_id', 'unknown') if execution_result else 'unknown'
                 result = f"SUCCESS: Task '{task_description}' completed by '{agent.name}' using expert '{expert_id}'."
                 results.append(result)
-                self.global_workspace.broadcast(agent.name, result)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+                self.global_workspace.upload_to_workspace(agent.name, result, salience=0.6)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
             else:
                 result = f"FAILURE: Task '{task_description}' failed by '{agent.name}' (no suitable expert found)."
                 results.append(result)
-                self.global_workspace.broadcast(agent.name, result)
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+                self.global_workspace.upload_to_workspace(agent.name, result, salience=0.9) # 失敗は顕著性が高い
+                # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
                 
                 print(f"!! Task failed. Attempting to find a collaborator...")
                 collaboration_proposal = await self._find_collaborator_for_task(task, agent)
@@ -187,7 +207,13 @@ class EmergentCognitiveSystem:
                     print("-- No collaborator found. Aborting this task branch.")
 
         final_report = self._synthesize_results(results)
-        self.global_workspace.broadcast("system", f"Goal '{high_level_goal}' completed. Final report generated.")
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        self.global_workspace.upload_to_workspace(
+            "system",
+            f"Goal '{high_level_goal}' completed. Final report generated.",
+            salience=0.7
+        )
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         print(f"--- Emergent System: Goal Execution Finished ---")
         return final_report
 
@@ -199,4 +225,3 @@ class EmergentCognitiveSystem:
         for i, res in enumerate(results):
             report += f"- Step {i+1}: {res}\n"
         return report
-

@@ -126,6 +126,7 @@ class RAGSystem:
         if self.vector_store is None:
             self.setup_vector_store()
             if self.vector_store is None:
+                # それでもNoneの場合は空のストアを初期化
                 self.vector_store = FAISS.from_texts([], self.embedding_model)
 
         if condition:

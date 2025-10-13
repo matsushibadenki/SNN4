@@ -3,6 +3,11 @@
 # 修正点: PlannerSNNに渡すプロンプトが長くなりすぎる問題を修正。
 #         - RAGで取得した知識を要約・切り詰める処理を追加。
 #         - トークナイザ呼び出し時にtruncation=Trueを指定し、入力をモデルの最大長に制限。
+#
+# 改善点(v2):
+# - 因果推論エンジンの導入に伴い、計画立案時に因果知識グラフを検索するロジックを追加。
+# - RAGSystemから"Causal Relation"を検索し、もし目標達成に繋がる行動が見つかれば、
+#   それを優先的に計画に採用する。
 
 from typing import List, Dict, Any, Optional
 import torch
@@ -28,7 +33,7 @@ class Plan:
 class HierarchicalPlanner:
     """
     高レベルの目標をサブタスクに分解する階層型プランナー。
-    PlannerSNNとRAGSystemを内部で利用して、動的に計画を生成する。
+    PlannerSNNと因果知識グラフ（RAGSystem）を利用して、動的に計画を生成する。
     """
     def __init__(
         self,
@@ -78,37 +83,33 @@ class HierarchicalPlanner:
 
     async def create_plan(self, high_level_goal: str, context: Optional[str] = None) -> Plan:
         """
-        目標に基づいて計画を作成する。PlannerSNNが利用可能であればそれを使用する。
-        RAGシステムのナレッジグラフを活用して、記号推論に基づいた計画を試みる。
+        目標に基づいて計画を作成する。因果知識グラフ、PlannerSNN、ルールベースの順で試行する。
         """
         print(f"🌍 Creating plan for goal: {high_level_goal}")
-
         self.SKILL_MAP = await self._build_skill_map()
+        task_list: List[Dict[str, Any]] = []
 
+        # 1. 因果知識グラフに基づく推論的計画
+        task_list = self._create_causal_plan(high_level_goal)
+        if task_list:
+            print(f"✅ Plan created with {len(task_list)} step(s) based on causal inference.")
+            return Plan(goal=high_level_goal, task_list=task_list)
+
+        # 2. PlannerSNNによる学習ベースの計画
         if self.planner_model and len(self.SKILL_MAP) > 0:
             knowledge_query = f"Find concepts and relations for: {high_level_goal}"
             retrieved_knowledge = self.rag_system.search(knowledge_query, k=3)
-            
-            # 取得した知識が長くなりすぎないように要約・切り詰め
             knowledge_summary = " ".join(doc[:250] + "..." for doc in retrieved_knowledge)
-            if len(knowledge_summary) > 800:
-                knowledge_summary = knowledge_summary[:800] + "..."
+            if len(knowledge_summary) > 800: knowledge_summary = knowledge_summary[:800] + "..."
 
             full_prompt = f"Goal: {high_level_goal}\n\nRetrieved Knowledge:\n{knowledge_summary}"
-            if context:
-                full_prompt += f"\n\nUser Provided Context:\n{context}"
+            if context: full_prompt += f"\n\nUser Provided Context:\n{context}"
             
             print(f"🧠 PlannerSNN is reasoning with prompt: {full_prompt[:250]}...")
             
             self.planner_model.eval()
             with torch.no_grad():
-                # truncation=True を指定して、入力をモデルの最大長に制限する
-                inputs = self.tokenizer(
-                    full_prompt, 
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=self.max_length
-                )
+                inputs = self.tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
                 input_ids = inputs['input_ids'].to(self.device)
                 skill_logits, _, _ = self.planner_model(input_ids)
                 predicted_skill_id = int(torch.argmax(skill_logits, dim=-1).item())
@@ -118,14 +119,11 @@ class HierarchicalPlanner:
                     task_list = [task]
                     print(f"🧠 PlannerSNN predicted skill ID: {predicted_skill_id} -> Task: {task.get('task')}")
                 else:
-                    print(f"⚠️ PlannerSNN predicted an invalid skill ID: {predicted_skill_id}. Falling back to causal planning.")
-                    task_list = self._create_causal_plan(high_level_goal)
-        else:
-            print("⚠️ PlannerSNN not available. Attempting causal planning...")
-            task_list = self._create_causal_plan(high_level_goal)
-
+                    print(f"⚠️ PlannerSNN predicted an invalid skill ID: {predicted_skill_id}.")
+        
+        # 3. ルールベースのフォールバック
         if not task_list:
-            print("⚠️ Causal planning failed. Falling back to rule-based planning.")
+            print("⚠️ PlannerSNN failed or unavailable. Falling back to rule-based planning.")
             task_list = self._create_rule_based_plan(high_level_goal)
 
         print(f"✅ Plan created with {len(task_list)} step(s).")
@@ -135,22 +133,27 @@ class HierarchicalPlanner:
         """
         ナレッジグラフ（RAGSystem）を検索し、因果関係を辿って計画を推論する。
         """
-        print(f"🔍 Inferring plan from knowledge graph for: {high_level_goal}")
-        task_list = []
-        
-        query = f"Goal: {high_level_goal}. Find skills or actions that achieve this."
+        print(f"🔍 Inferring plan from causal knowledge graph for: {high_level_goal}")
+        query = f"Find causal relation where the effect is related to the goal: {high_level_goal}"
         retrieved_docs = self.rag_system.search(query, k=3)
         
         available_skills = list(self.SKILL_MAP.values())
 
         for doc in retrieved_docs:
-            for skill in available_skills:
-                skill_name = (skill.get('task') or '').lower()
-                if skill_name and skill_name in doc.lower():
-                    if skill not in task_list:
-                        print(f"  - Found relevant skill from KG: {skill_name}")
-                        task_list.append(skill)
-                        return task_list
+            if "Causal Relation:" in doc:
+                # "event 'cause' leads to the effect 'effect'" の形式をパース
+                parts = doc.split("'")
+                if len(parts) >= 4:
+                    cause_event = parts[3] # A
+                    effect_event = parts[5] # B
+                    
+                    # effectがゴールに関連し、causeが実行可能なスキルであれば計画に採用
+                    if high_level_goal.lower() in effect_event.lower():
+                        for skill in available_skills:
+                            skill_action_name = f"action_{skill.get('task', '')}"
+                            if skill_action_name == cause_event:
+                                print(f"  - Found causal link: To achieve '{effect_event}', perform '{cause_event}'. Using skill '{skill.get('task')}'.")
+                                return [skill]
         
         print("  - No direct causal path found in the knowledge graph.")
         return []
