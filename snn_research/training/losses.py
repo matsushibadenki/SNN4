@@ -13,7 +13,7 @@ from transformers import PreTrainedTokenizerBase
 
 class CombinedLoss(nn.Module):
     """クロスエントロピー損失、各種正則化、EWC損失を組み合わせた損失関数。"""
-    def __init__(self, ce_weight: float, spike_reg_weight: float, mem_reg_weight: float, sparsity_reg_weight: float, tokenizer: PreTrainedTokenizerBase, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 1.0, spike_reg_weight: float = 0.0, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.0, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
         super().__init__()
         pad_id = tokenizer.pad_token_id
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
@@ -59,8 +59,8 @@ class CombinedLoss(nn.Module):
 # (以降のDistillationLossなどのクラスは変更なし)
 class DistillationLoss(nn.Module):
     """知識蒸留のための損失関数（各種正則化付き）。"""
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float, distill_weight: float,
-                 spike_reg_weight: float, mem_reg_weight: float, sparsity_reg_weight: float, temperature: float, target_spike_rate: float = 0.02, **kwargs):
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 0.3, distill_weight: float = 0.7,
+                 spike_reg_weight: float = 0.01, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.00001, temperature: float = 2.0, target_spike_rate: float = 0.02, **kwargs):
         super().__init__()
         student_pad_id = tokenizer.pad_token_id
         self.temperature = temperature
@@ -155,7 +155,7 @@ class PhysicsInformedLoss(nn.Module):
     """
     物理法則（膜電位の滑らかさ）を制約として組み込んだ損失関数。
     """
-    def __init__(self, ce_weight: float, spike_reg_weight: float, mem_smoothness_weight: float, tokenizer: PreTrainedTokenizerBase, target_spike_rate: float = 0.02):
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 1.0, spike_reg_weight: float = 0.0, mem_smoothness_weight: float = 0.0, target_spike_rate: float = 0.02):
         super().__init__()
         pad_id = tokenizer.pad_token_id
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
