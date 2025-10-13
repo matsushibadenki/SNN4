@@ -17,6 +17,10 @@
 #
 # 改善点 (v16):
 # - スパイクベースの通信タスクを実行するための `emergent-system communicate` コマンドを追加。
+#
+# 改善点 (v17):
+# - ROADMAP v8.0 フェーズ4に基づき、人工脳シミュレーションを制御するための
+#   `brain` コマンドグループ (`run`, `loop`) を追加。
 
 import sys
 from pathlib import Path
@@ -290,7 +294,6 @@ def emergent_execute(
     print(final_report)
     print("="*60)
 
-# --- ◾️◾️◾️◾️◾️↓コマンド追加↓◾️◾️◾️◾️◾️ ---
 @emergent_app.command("communicate", help="エージェント間のスパイクベース通信タスクを実行します。")
 def emergent_communicate():
     """スパイク通信の協調タスクを実行する。"""
@@ -319,8 +322,6 @@ def emergent_communicate():
     )
     
     asyncio.run(emergent_system.run_cooperative_observation_task())
-# --- ◾️◾️◾️◾️◾️↑コマンド追加↑◾️◾️◾️◾️◾️ ---
-
 
 @brain_app.command("run", help="単一の入力で人工脳の認知サイクルを1回実行します。")
 def brain_run(
@@ -425,7 +426,6 @@ def gradient_train(ctx: typer.Context):
     finally:
         sys.argv = original_argv
 
-
 @app.command(
     "train-ultra",
     help="""
@@ -473,8 +473,7 @@ def train_ultra_model(ctx: typer.Context):
         print(f"\n❌ 学習中にエラーが発生しました: {e}")
     finally:
         sys.argv = original_argv
-        
-        
+
+
 if __name__ == "__main__":
     app()
-
