@@ -1,8 +1,10 @@
 # ファイルパス: snn_research/agent/digital_life_form.py
 # (更新)
 # 改善点:
-# - life_cycle_stepに、GlobalWorkspaceから因果的クレジット信号を検知し、
-#   適切なエージェントの学習プロセスに変調を加えるロジックを追加。
+# - DigitalLifeFormがHierarchicalPlannerを直接利用して、
+#   高レベルの目標から具体的な行動計画を立案・実行するように修正。
+# - `_decide_next_action`を`_formulate_goal`に改名し、自然言語の目標を生成するようにした。
+# - `life_cycle_step`で、生成された計画をループ実行するロジックを実装。
 
 import time
 import logging
@@ -14,7 +16,6 @@ from typing import Dict, Any, Optional, List, TYPE_CHECKING
 import operator
 import os
 
-# (import文は変更なし)
 from snn_research.cognitive_architecture.intrinsic_motivation import IntrinsicMotivationSystem
 from snn_research.cognitive_architecture.meta_cognitive_snn import MetaCognitiveSNN
 from snn_research.agent.memory import Memory
@@ -24,6 +25,8 @@ from snn_research.agent.autonomous_agent import AutonomousAgent
 from snn_research.agent.reinforcement_learner_agent import ReinforcementLearnerAgent
 from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
 from snn_research.cognitive_architecture.global_workspace import GlobalWorkspace
+# HierarchicalPlannerをインポート
+from snn_research.cognitive_architecture.hierarchical_planner import HierarchicalPlanner
 
 if TYPE_CHECKING:
     from app.adapters.snn_langchain_adapter import SNNLangChainAdapter
@@ -33,8 +36,12 @@ if TYPE_CHECKING:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class DigitalLifeForm:
+    """
+    プランナーと連携し、目標に基づいた計画を実行する、進化したオーケストレーター。
+    """
     def __init__(
         self,
+        planner: HierarchicalPlanner,
         autonomous_agent: AutonomousAgent,
         rl_agent: ReinforcementLearnerAgent,
         self_evolving_agent: SelfEvolvingAgent,
@@ -44,9 +51,11 @@ class DigitalLifeForm:
         physics_evaluator: PhysicsEvaluator,
         symbol_grounding: SymbolGrounding,
         langchain_adapter: "SNNLangChainAdapter",
-        # GlobalWorkspaceを追加
         global_workspace: GlobalWorkspace
     ):
+        # --- ▼ 修正 ▼ ---
+        self.planner = planner
+        # --- ▲ 修正 ▲ ---
         self.autonomous_agent = autonomous_agent
         self.rl_agent = rl_agent
         self.self_evolving_agent = self_evolving_agent
@@ -56,57 +65,74 @@ class DigitalLifeForm:
         self.physics_evaluator = physics_evaluator
         self.symbol_grounding = symbol_grounding
         self.langchain_adapter = langchain_adapter
-        # GlobalWorkspaceインスタンスを保持
         self.workspace = global_workspace
         
         self.running = False
         self.state: Dict[str, Any] = {"last_action": None, "last_result": None, "last_task": "unknown"}
 
     # ... (start, stop, life_cycleメソッドは変更なし) ...
-    def start(self):
-        self.running = True
-        logging.info("DigitalLifeForm activated. Starting autonomous loop.")
-        self.life_cycle()
-
-    def stop(self):
-        self.running = False
-        logging.info("DigitalLifeForm deactivating.")
-
+    def start(self): self.running = True; logging.info("DigitalLifeForm activated."); self.life_cycle()
+    def stop(self): self.running = False; logging.info("DigitalLifeForm deactivating.")
     def life_cycle(self):
-        while self.running:
-            self.life_cycle_step()
-            time.sleep(10)
+        while self.running: self.life_cycle_step(); time.sleep(10)
 
+    # --- ▼ 修正 ▼ ---
     def life_cycle_step(self):
-        """life_cycleの1回分の処理"""
-        # --- ▼ 修正 ▼ ---
-        # 1. 意思決定の前に、前サイクルの因果クレジットを処理する
+        """計画主導の認知サイクルを実行する。"""
+        logging.info("\n--- 🧠 New Cognitive Cycle ---")
         self._handle_causal_credit()
-        # --- ▲ 修正 ▲ ---
 
-        # 2. 内部状態の評価と次の行動決定
+        # 1. 内部状態を評価し、高レベルの目標を策定する
         internal_state = self.motivation_system.get_internal_state()
         performance_eval = self.meta_cognitive_snn.evaluate_performance()
-        action = self._decide_next_action(internal_state, performance_eval)
+        goal = self._formulate_goal(internal_state, performance_eval)
+        logging.info(f"🎯 New Goal: {goal}")
         
-        # 3. 行動実行と経験の記録
-        result, external_reward, expert_used = self._execute_action(action, internal_state)
+        # 2. プランナーに目標を渡し、行動計画を立案させる
+        plan = asyncio.run(self.planner.create_plan(goal))
+
+        # 3. 計画されたタスクを順番に実行する
+        if not plan.task_list:
+            logging.warning("Planner could not create a plan. Idling for this cycle.")
+            return
+
+        logging.info(f"📋 Plan Created: {[task.get('task') for task in plan.task_list]}")
+        for task in plan.task_list:
+            action = task.get('task')
+            if not action: continue
+
+            logging.info(f"▶️ Executing task from plan: {action}")
+            result, reward, expert_used = self._execute_action(action, internal_state)
+
+            # 4. 各ステップの結果を記録・評価する
+            if isinstance(result, dict): self.symbol_grounding.process_observation(result, context=f"action '{action}'")
+            reward_vector = {"external": reward, "curiosity": internal_state.get("curiosity", 0.0)}
+            decision_context = {"goal": goal, "plan": [t.get('task') for t in plan.task_list]}
+            self.memory.record_experience(self.state, action, result, reward, expert_used, decision_context)
+            
+            # (簡易的な動機更新)
+            self.motivation_system.update_metrics(random.random(), 1.0 if reward > 0 else 0.0, random.random(), random.random())
+
+            self.state["last_action"] = action; self.state["last_result"] = result
+            logging.info(f"  - Task Result: {str(result)[:100]}, Reward: {reward:.2f}")
+
+            if reward < 0:
+                logging.warning(f"  - Task '{action}' failed. Aborting current plan.")
+                break # 計画の途中で失敗したら中止
+
+    def _formulate_goal(self, internal_state: Dict[str, Any], performance_eval: Dict[str, Any]) -> str:
+        """内部状態とパフォーマンス評価から、自然言語の目標を生成する。"""
+        if internal_state.get("curiosity", 0.0) > 0.8 and internal_state.get("curiosity_context"):
+            topic = internal_state.get("curiosity_context")
+            return f"Explore the unknown concept related to '{str(topic)}' to satisfy curiosity."
         
-        # 4. 経験の記録と評価
-        if isinstance(result, dict): self.symbol_grounding.process_observation(result, context=f"action '{action}'")
-        reward_vector = {"external": external_reward, "curiosity": internal_state.get("curiosity", 0.0)}
-        decision_context = {"internal_state": internal_state, "performance_eval": performance_eval}
-        causal_snapshot = f"Action '{action}' was chosen due to: {decision_context}"
-        
-        self.memory.record_experience(self.state, action, result, reward_vector, expert_used, decision_context, causal_snapshot)
-        
-        # 5. 内発的動機の更新
-        context_for_motivation = {"action": action, "result": result}
-        self.motivation_system.update_metrics(random.random(), random.random(), random.random(), random.random(), context=context_for_motivation)
-        
-        self.state["last_action"] = action
-        self.state["last_result"] = result
-        logging.info(f"Action: {action}, Result: {str(result)[:100]}, Reward: {external_reward:.2f}")
+        if performance_eval.get("status") == "capability_gap":
+            return "Evolve my architecture to overcome a capability gap."
+
+        if internal_state.get("boredom", 0.0) > 0.7:
+            return "Explore a completely new and random task to alleviate boredom."
+
+        return "Practice an existing skill to improve confidence and performance."
 
     # --- ▼ 修正 ▼ ---
     def _handle_causal_credit(self):
