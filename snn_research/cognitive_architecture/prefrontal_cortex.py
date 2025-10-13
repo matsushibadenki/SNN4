@@ -70,11 +70,17 @@ class PrefrontalCortex:
             return self.current_goal
         
         # --- 優先度2: 外部からの要求 ---
-        if external_request_data and external_request_data.get("type") == "text":
-            request = external_request_data.get("content")
-            self.current_goal = f"Fulfill external request: {request}"
-            print(f"🎯 新目標（外部要求）: {self.current_goal}")
-            return self.current_goal
+        if external_request_data:
+            request = ""
+            if isinstance(external_request_data, dict) and external_request_data.get("type") == "text":
+                request = external_request_data.get("content", "")
+            elif isinstance(external_request_data, str):
+                request = external_request_data
+            
+            if request:
+                self.current_goal = f"Fulfill external request: {request}"
+                print(f"🎯 新目標（外部要求）: {self.current_goal}")
+                return self.current_goal
 
         # --- 優先度3: 強い情動反応 ---
         if conscious_content.get("type") == "emotion" and abs(conscious_content.get("valence", 0.0)) > 0.7:
