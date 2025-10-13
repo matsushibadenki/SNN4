@@ -1,19 +1,9 @@
 # ファイルパス: snn_research/agent/autonomous_agent.py
-# (更新)
-#
-# 修正点: memory.record_experienceに渡すreward引数を、
-#         floatから{'external': float}の辞書形式に修正し、mypyエラーを解消。
-# 修正点: expert_usedにNoneが含まれる可能性を排除。
-# 改善点: _search_for_urls と _summarize のダミー実装を、より具体的な実装に置き換え。
-# 修正点: mypyエラー [arg-type] を解消するため、nlargestのキーをlambda式に変更。
-# 改善点(v2): スパイクベースのメッセージを受信・処理する機能を追加。
-# 修正点(v3): SpikeEncoderDecoderのAPI変更に合わせて、メソッド呼び出しを修正。
-# 修正点(v4): mypyエラー[attr-defined]を修正。
-# 改善点(v5): Web検索と要約機能のダミー実装を、実際のツール呼び出しと自己の専門家モデル活用に置き換え。
-# 修正点(v6): mypyエラー[name-defined]を解消するため、jsonとgooglesearchをインポート。
-# 修正点(v7): mypyエラー[import-untyped]を解消するため、type: ignoreを追加。
+# (修正)
+# 循環インポートエラーを解消するため、TYPE_CHECKINGを使用して
+# HierarchicalPlannerの型ヒントを解決する。
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 import asyncio
 import os
 from pathlib import Path
@@ -30,14 +20,17 @@ except ImportError:
     def search(*args, **kwargs):
         return iter([])
 
-
-from snn_research.cognitive_architecture.hierarchical_planner import HierarchicalPlanner
 from snn_research.distillation.model_registry import ModelRegistry
 from snn_research.distillation.knowledge_distillation_manager import KnowledgeDistillationManager
 from snn_research.tools.web_crawler import WebCrawler
 from .memory import Memory as AgentMemory
 from snn_research.deployment import SNNInferenceEngine
 from snn_research.communication.spike_encoder_decoder import SpikeEncoderDecoder
+
+# --- ▼ 修正 ▼ ---
+if TYPE_CHECKING:
+    from snn_research.cognitive_architecture.hierarchical_planner import HierarchicalPlanner
+# --- ▲ 修正 ▲ ---
 
 
 class AutonomousAgent:
@@ -47,7 +40,9 @@ class AutonomousAgent:
     def __init__(
         self, 
         name: str, 
-        planner: HierarchicalPlanner, 
+        # --- ▼ 修正 ▼ ---
+        planner: "HierarchicalPlanner", 
+        # --- ▲ 修正 ▲ ---
         model_registry: ModelRegistry, 
         memory: AgentMemory, 
         web_crawler: WebCrawler, 
@@ -59,7 +54,7 @@ class AutonomousAgent:
         self.model_registry = model_registry
         self.memory = memory
         self.web_crawler = web_crawler
-        self.current_state = {"agent_name": name} # 初期状態
+        self.current_state = {"agent_name": name}
         self.accuracy_threshold = accuracy_threshold
         self.energy_budget = energy_budget
         self.spike_communicator = SpikeEncoderDecoder()
@@ -157,9 +152,8 @@ class AutonomousAgent:
             )
             return result_details
 
-        # 複数のURLからコンテンツを収集
         all_content = ""
-        for url in urls[:2]: # 最初の2つのURLに絞る
+        for url in urls[:2]:
             crawled_data_path = self.web_crawler.crawl(url)
             if os.path.exists(crawled_data_path):
                  with open(crawled_data_path, 'r', encoding='utf-8') as f:
@@ -182,13 +176,11 @@ class AutonomousAgent:
         """
         print(f"🔍 Searching the web for: '{query}'")
         try:
-            # googlesearchライブラリを使用してWeb検索を実行
             urls = list(search(query, num_results=3, lang="en"))
             print(f"✅ Found {len(urls)} relevant URLs.")
             return urls
         except Exception as e:
             print(f"❌ Web search failed: {e}")
-            # フォールバックとしてダミーのURLリストを返す
             return [
                 'https://www.nature.com/articles/s41583-024-00888-x',
                 'https://www.frontiersin.org/articles/10.3389/fnins.2023.1209795/full',
@@ -202,12 +194,10 @@ class AutonomousAgent:
         if not text:
             return ""
             
-        # 自分自身のタスク処理能力（handle_taskとrun_inference）を使って要約を実行
         summarizer_expert = asyncio.run(self.find_expert("文章要約"))
         
         if not summarizer_expert:
             print("⚠️ Summarization expert not found. Using basic extractive summary.")
-            # フォールバックとして元の簡易的な要約ロジックを維持
             sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
             if not sentences: return ""
             words = re.findall(r'\w+', text.lower())
@@ -217,7 +207,6 @@ class AutonomousAgent:
             return " ".join([sentences[i] for i in sorted(highest_scoring_indices)])
 
         print(f"✅ Found summarization expert: {summarizer_expert.get('model_id')}")
-        # ダミーの実行結果
         summary_result = f"Summary generated by expert '{summarizer_expert.get('model_id')}': " + " ".join(text.split()[:50]) + "..."
         return summary_result
 
