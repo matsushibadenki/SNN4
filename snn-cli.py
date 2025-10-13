@@ -426,6 +426,55 @@ def gradient_train(ctx: typer.Context):
         sys.argv = original_argv
 
 
+@app.command(
+    "train-ultra",
+    help="""
+    🚀 **最強のエンジン（Ultraモデル）**を学習します。
+    
+    プロジェクトで利用可能な最大規模のSpiking Transformer（configs/models/ultra.yaml）を、
+    大規模データセット（wikitext-103）を用いて本格的に学習させます。
+    """,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def train_ultra_model(ctx: typer.Context):
+    """
+    最強設定（ultra.yaml）で学習プロセスを開始するラッパーコマンド。
+    """
+    import train as gradient_based_trainer
+    from scripts.data_preparation import prepare_wikitext_data
+    
+    print("--------------------------------------------------")
+    print("🚀 「最強のエンジン」の学習プロセスを開始します...")
+    print("--------------------------------------------------")
+
+    # ステップ1: 大規模データセットの準備
+    print("\n[ステップ1/2] 大規模データセット（wikitext-103）を準備しています...")
+    wikitext_path = prepare_wikitext_data()
+    print(f"✅ データセット準備完了: {wikitext_path}")
+
+    # ステップ2: 学習の開始
+    print("\n[ステップ2/2] train.pyを呼び出し、Ultraモデルの学習を開始します...")
+    
+    # train.pyに渡す引数を構築
+    train_args = [
+        "--model_config", "configs/models/ultra.yaml",
+        "--data_path", wikitext_path,
+        "--paradigm", "gradient_based"
+    ] + ctx.args # ユーザーが追加で渡した引数（--override_configなど）も反映
+
+    original_argv = sys.argv
+    sys.argv = ["train.py"] + train_args
+    
+    try:
+        gradient_based_trainer.main()
+        print("\n🎉 「最強のエンジン」の学習が完了しました！")
+        print("次に、'snn-cli.py ui start --model_config configs/models/ultra.yaml' を実行して対話ができます。")
+    except Exception as e:
+        print(f"\n❌ 学習中にエラーが発生しました: {e}")
+    finally:
+        sys.argv = original_argv
+        
+        
 if __name__ == "__main__":
     app()
 
