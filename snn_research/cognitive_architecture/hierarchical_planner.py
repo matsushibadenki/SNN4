@@ -80,9 +80,7 @@ class HierarchicalPlanner:
         if skills_to_avoid is None: skills_to_avoid = []
         print(f"🌍 Creating plan for goal: {high_level_goal}, avoiding skills: {skills_to_avoid}")
         self.SKILL_MAP = await self._build_skill_map()
-        
         task_list = self._create_rule_based_plan(high_level_goal, skills_to_avoid)
-
         print(f"✅ Plan created with {len(task_list)} step(s).")
         return Plan(goal=high_level_goal, task_list=task_list)
 
