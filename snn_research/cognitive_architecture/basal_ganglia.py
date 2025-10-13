@@ -93,20 +93,13 @@ class BasalGanglia:
         values = torch.tensor([candidate.get('value', 0.0) for candidate in action_candidates])
         print(f"  - 大脳基底核: 検討中の行動候補: {[c.get('action') for c in action_candidates]}, 価値: {[round(v.item(), 2) for v in values]}")
 
-        winner_takes_all = F.softmax(values * 5.0, dim=0)
-        inhibition_mask = torch.ones_like(values)
-        winner_index = torch.argmax(values)
-        for i in range(len(inhibition_mask)):
-            if i != winner_index:
-                inhibition_mask[i] = 1.0 - self.inhibition_strength
+        best_action_index = torch.argmax(values)
+        best_action_value = values[best_action_index]
 
-        final_activation = winner_takes_all * inhibition_mask
-        best_action_index = torch.argmax(final_activation)
-
-        if final_activation[best_action_index] >= current_threshold:
+        if best_action_value >= current_threshold:
             self.selected_action = action_candidates[best_action_index]
-            print(f"🏆 行動選択: '{self.selected_action.get('action')}' (活性値: {final_activation[best_action_index]:.2f}, 閾値: {current_threshold:.2f})")
+            print(f"🏆 行動選択: '{self.selected_action.get('action')}' (活性値: {best_action_value:.2f}, 閾値: {current_threshold:.2f})")
             return self.selected_action
         else:
-            print(f"🤔 行動棄却: どの行動も実行閾値 ({current_threshold:.2f}) に達しませんでした。(最大活性値: {final_activation.max():.2f})")
+            print(f"🤔 行動棄却: どの行動も実行閾値 ({current_threshold:.2f}) に達しませんでした。(最大活性値: {best_action_value:.2f})")
             return None
