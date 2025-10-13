@@ -34,7 +34,8 @@ from snn_research.training.losses import (
 )
 from snn_research.training.trainers import (
     BreakthroughTrainer, DistillationTrainer, SelfSupervisedTrainer,
-    PhysicsInformedTrainer, ProbabilisticEnsembleTrainer, ParticleFilterTrainer
+    PhysicsInformedTrainer, ProbabilisticEnsembleTrainer, ParticleFilterTrainer,
+    PlannerTrainer
 )
 from snn_research.training.bio_trainer import BioRLTrainer
 from snn_research.cognitive_architecture.astrocyte_network import AstrocyteNetwork
@@ -147,7 +148,61 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
 
     # (省略: 他のTrainer関連のプロバイダは変更なし)
-    # ...
+    optimizer = providers.Factory(
+        AdamW,
+        lr=config.training.gradient_based.learning_rate
+    )
+    scheduler = providers.Factory(
+        _create_scheduler,
+        optimizer=optimizer,
+        epochs=config.training.epochs,
+        warmup_epochs=config.training.gradient_based.warmup_epochs,
+    )
+    standard_trainer = providers.Factory(
+        BreakthroughTrainer,
+        criterion=providers.Factory(CombinedLoss, **config.training.gradient_based.loss.to_dict(), tokenizer=tokenizer),
+        grad_clip_norm=config.training.gradient_based.grad_clip_norm,
+        use_amp=config.training.gradient_based.use_amp,
+        log_dir=config.training.log_dir,
+        meta_cognitive_snn=meta_cognitive_snn,
+    )
+    distillation_trainer = providers.Factory(
+        DistillationTrainer,
+         criterion=providers.Factory(DistillationLoss, **config.training.gradient_based.distillation.loss.to_dict(), tokenizer=tokenizer),
+        grad_clip_norm=config.training.gradient_based.grad_clip_norm,
+        use_amp=config.training.gradient_based.use_amp,
+        log_dir=config.training.log_dir,
+        meta_cognitive_snn=meta_cognitive_snn,
+    )
+    physics_informed_trainer = providers.Factory(
+        PhysicsInformedTrainer,
+         criterion=providers.Factory(PhysicsInformedLoss, **config.training.physics_informed.loss.to_dict(), tokenizer=tokenizer),
+        grad_clip_norm=config.training.physics_informed.grad_clip_norm,
+        use_amp=config.training.physics_informed.use_amp,
+        log_dir=config.training.log_dir,
+        meta_cognitive_snn=meta_cognitive_snn,
+    )
+    pi_optimizer = providers.Factory(
+        AdamW,
+        lr=config.training.physics_informed.learning_rate
+    )
+    pi_scheduler = providers.Factory(
+        _create_scheduler,
+        optimizer=pi_optimizer,
+        epochs=config.training.epochs,
+        warmup_epochs=config.training.physics_informed.warmup_epochs,
+    )
+    bio_rl_trainer = providers.Factory(
+        BioRLTrainer,
+        agent=providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device),
+        env=providers.Factory(GridWorldEnv, device=device)
+    )
+    particle_filter_trainer = providers.Factory(
+        ParticleFilterTrainer,
+        base_model=providers.Factory(BioSNN, layer_sizes=[10, 5, 2], neuron_params={'tau_mem': 10.0, 'v_threshold': 1.0, 'v_reset': 0.0, 'v_rest': 0.0}, learning_rule=providers.Object(None)),
+        config=config,
+        device=device,
+    )
 
     # === 学習可能プランナー (PlannerSNN) のためのプロバイダ ===
     planner_snn = providers.Factory(
