@@ -51,11 +51,11 @@ class SpikingHRM(BaseModel):
         self.layers = nn.ModuleList()
         input_dim = d_model
         for i in range(hrm_layers):
-            top_down_dim = layer_dims[i+1] if i < hrm_layers - 1 else layer_dims[i]
-            layer = HRMLayer(input_dim, layer_dims[i], top_down_dim, neuron_config)
+            top_down_dim = self.layer_dims[i+1] if i < self.hrm_layers - 1 else self.layer_dims[i]
+            layer = HRMLayer(input_dim, self.layer_dims[i], top_down_dim, neuron_config)
             self.layers.append(layer)
-            input_dim = layer_dims[i]
-        self.output_projection = nn.Linear(sum(layer_dims), vocab_size)
+            input_dim = self.layer_dims[i]
+        self.output_projection = nn.Linear(sum(self.layer_dims), vocab_size)
         self._init_weights()
 
     def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -82,4 +82,3 @@ class SpikingHRM(BaseModel):
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
         mem = torch.tensor(0.0, device=input_ids.device)
         return final_logits, avg_spikes, mem
-
