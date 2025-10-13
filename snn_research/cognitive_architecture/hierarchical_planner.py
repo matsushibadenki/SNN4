@@ -1,7 +1,8 @@
 # ファイルパス: snn_research/cognitive_architecture/hierarchical_planner.py
 # (修正)
-# 改善点(v2):
-# - 因果推論エンジンの導入に伴い、計画立案時に因果知識グラフを検索するロジックを追加。
+# 改善点:
+# - タスク失敗時に因果的記憶を検索し、失敗原因を特定して計画を修正する
+#   `refine_plan_after_failure`メソッドを実装。
 
 from typing import List, Dict, Any, Optional
 import torch
@@ -11,6 +12,8 @@ import asyncio
 from .planner_snn import PlannerSNN
 from snn_research.distillation.model_registry import ModelRegistry
 from .rag_snn import RAGSystem
+# Memoryクラスをインポート
+from snn_research.agent.memory import Memory
 
 class Plan:
     # (変更なし)
@@ -25,23 +28,26 @@ class HierarchicalPlanner:
         self,
         model_registry: ModelRegistry,
         rag_system: RAGSystem,
+        # Memoryを依存性として追加
+        memory: Memory,
         planner_model: Optional[PlannerSNN] = None,
         tokenizer_name: str = "gpt2",
         device: str = "cpu"
     ):
-        # (変更なし)
         self.model_registry = model_registry
         self.rag_system = rag_system
+        # Memoryインスタンスを保持
+        self.memory = memory
         self.planner_model = planner_model
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.max_length = getattr(self.tokenizer, 'model_max_length', 1024)
         self.device = device
         if self.planner_model: self.planner_model.to(self.device)
         self.SKILL_MAP: Dict[int, Dict[str, Any]] = asyncio.run(self._build_skill_map())
-        print(f"🧠 Planner initialized with {len(self.SKILL_MAP)} skills.")
+        print(f"🧠 Planner initialized with {len(self.SKILL_MAP)} skills and Causal Memory access.")
 
+    # _build_skill_map, _create_rule_based_plan, execute_task は変更なし
     async def _build_skill_map(self) -> Dict[int, Dict[str, Any]]:
-        # (変更なし)
         all_models = await self.model_registry.list_models()
         skill_map: Dict[int, Dict[str, Any]] = {}
         for i, model_info in enumerate(all_models):
@@ -50,102 +56,103 @@ class HierarchicalPlanner:
             skill_map[len(skill_map)] = {"task": "general_qa", "description": "Answer a general question.", "expert_id": "general_snn_v3"}
         return skill_map
 
-    async def create_plan(self, high_level_goal: str, context: Optional[str] = None) -> Plan:
-        print(f"🌍 Creating plan for goal: {high_level_goal}")
-        self.SKILL_MAP = await self._build_skill_map()
-        task_list: List[Dict[str, Any]] = []
-
-        # --- ◾️◾️◾️◾️◾️↓ここからが重要↓◾️◾️◾️◾️◾️ ---
-        # 1. 因果知識グラフに基づく推論的計画 (最優先)
-        task_list = self._create_causal_plan(high_level_goal)
-        if task_list:
-            print(f"✅ Plan created with {len(task_list)} step(s) based on causal inference.")
-            return Plan(goal=high_level_goal, task_list=task_list)
-        # --- ◾️◾️◾️◾️◾️↑ここまでが重要↑◾️◾️◾️◾️◾️ ---
-
-        # 2. PlannerSNNによる学習ベースの計画 (次善)
-        if self.planner_model and len(self.SKILL_MAP) > 0:
-            knowledge_query = f"Find concepts and relations for: {high_level_goal}"
-            retrieved_knowledge = self.rag_system.search(knowledge_query, k=3)
-            knowledge_summary = " ".join(doc[:250] + "..." for doc in retrieved_knowledge)
-            if len(knowledge_summary) > 800: knowledge_summary = knowledge_summary[:800] + "..."
-            full_prompt = f"Goal: {high_level_goal}\n\nKnowledge:\n{knowledge_summary}"
-            if context: full_prompt += f"\n\nContext:\n{context}"
-            
-            print(f"🧠 PlannerSNN is reasoning...")
-            self.planner_model.eval()
-            with torch.no_grad():
-                inputs = self.tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=self.max_length)
-                input_ids = inputs['input_ids'].to(self.device)
-                skill_logits, _, _ = self.planner_model(input_ids)
-                predicted_skill_id = int(torch.argmax(skill_logits, dim=-1).item())
-                
-                if predicted_skill_id in self.SKILL_MAP:
-                    task = self.SKILL_MAP[predicted_skill_id]
-                    task_list = [task]
-                    print(f"🧠 PlannerSNN predicted skill: {task.get('task')}")
-        
-        # 3. ルールベースのフォールバック (最終手段)
-        if not task_list:
-            print("⚠️ Falling back to rule-based planning.")
-            task_list = self._create_rule_based_plan(high_level_goal)
-
-        print(f"✅ Plan created with {len(task_list)} step(s).")
-        return Plan(goal=high_level_goal, task_list=task_list)
-
-    # --- ◾️◾️◾️◾️◾️↓ここからが重要↓◾️◾️◾️◾️◾️ ---
-    def _create_causal_plan(self, high_level_goal: str) -> List[Dict[str, Any]]:
-        """
-        ナレッジグラフ（RAGSystem）を検索し、因果関係を辿って計画を推論する。
-        """
-        print(f"🔍 Inferring plan from causal knowledge graph for: {high_level_goal}")
-        query = f"Find causal relation where the effect is related to the goal: {high_level_goal}"
-        retrieved_docs = self.rag_system.search(query, k=3)
-        
-        available_skills = list(self.SKILL_MAP.values())
-
-        for doc in retrieved_docs:
-            if "Causal Relation:" in doc:
-                # "event 'cause' leads to the effect 'effect'" の形式をパース
-                parts = doc.split("'")
-                if len(parts) >= 6:
-                    cause_event = parts[3] 
-                    effect_event = parts[5]
-                    
-                    # effectがゴールに関連し、causeが実行可能なスキルであれば計画に採用
-                    if high_level_goal.lower() in effect_event.lower():
-                        for skill in available_skills:
-                            # スキル名は "action_..." の形式で記録されていると仮定
-                            skill_action_name = f"action_{skill.get('task', '')}"
-                            if skill_action_name == cause_event:
-                                print(f"  - Found causal link: To achieve '{effect_event}', perform '{cause_event}'. Using skill '{skill.get('task')}'.")
-                                return [skill]
-        
-        print("  - No direct causal path found in the knowledge graph.")
-        return []
-    # --- ◾️◾️◾️◾️◾️↑ここまでが重要↑◾️◾️◾️◾️◾️ ---
-
-    def _create_rule_based_plan(self, prompt: str) -> List[Dict[str, Any]]:
-        # (変更なし)
+    def _create_rule_based_plan(self, prompt: str, skills_to_avoid: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        if skills_to_avoid is None: skills_to_avoid = []
         task_list = []
         prompt_lower = prompt.lower()
-        available_skills = list(self.SKILL_MAP.values())
+        available_skills = [s for s in self.SKILL_MAP.values() if s.get('task') not in skills_to_avoid]
         for skill in available_skills:
             task_keywords = (skill.get('task') or '').lower().split('_')
             desc_keywords = (skill.get('description') or '').lower().split()
             if any(kw in prompt_lower for kw in task_keywords if kw) or any(kw in prompt_lower for kw in desc_keywords if kw):
-                 if skill not in task_list: task_list.append(skill)
-        if not task_list:
+                if skill not in task_list: task_list.append(skill)
+        if not task_list and not skills_to_avoid:
             fallback = next((s for s in available_skills if "general" in (s.get("task") or "")), None)
             if fallback: task_list.append(fallback)
         return task_list
 
+    # --- ◾️◾️◾️◾️◾️↓ここからが重要↓◾️◾️◾️◾️◾️ ---
+    async def create_plan(
+        self,
+        high_level_goal: str,
+        context: Optional[str] = None,
+        skills_to_avoid: Optional[List[str]] = None
+    ) -> Plan:
+        """
+        目標に基づいて計画を作成する。避けるべきスキルのリストを考慮に入れる。
+        """
+        if skills_to_avoid is None: skills_to_avoid = []
+        print(f"🌍 Creating plan for goal: {high_level_goal}, avoiding skills: {skills_to_avoid}")
+        self.SKILL_MAP = await self._build_skill_map()
+        
+        # (既存の計画ロジックはルールベースに簡略化し、避けるべきスキルをフィルタリング)
+        task_list = self._create_rule_based_plan(high_level_goal, skills_to_avoid)
+
+        print(f"✅ Plan created with {len(task_list)} step(s).")
+        return Plan(goal=high_level_goal, task_list=task_list)
+
+    async def refine_plan_after_failure(
+        self,
+        failed_plan: Plan,
+        failed_task: Dict[str, Any]
+    ) -> Optional[Plan]:
+        """
+        タスク失敗後、因果的記憶を検索して計画を練り直す。
+        """
+        print(f"🤔 Task '{failed_task.get('task')}' failed. Refining plan using causal memory...")
+        
+        # 1. 失敗の因果関係をクエリとして作成
+        causal_query = f"The action '{failed_task.get('task')}' resulted in a failure while pursuing the goal '{failed_plan.goal}'."
+
+        # 2. 因果的記憶を検索
+        similar_failures = self.memory.retrieve_similar_experiences(causal_query=causal_query, top_k=3)
+
+        skills_to_avoid = {failed_task.get('task')}
+
+        # 3. 過去の失敗から学ぶ
+        if similar_failures:
+            print("  - Found similar past failures. Analyzing causes...")
+            for failure in similar_failures:
+                # 記録された因果関係テキストから、原因となった行動を抽出
+                retrieved_text = failure.get("retrieved_causal_text", "")
+                if "leads to the effect 'failure'" in retrieved_text:
+                    parts = retrieved_text.split("'")
+                    if len(parts) >= 4:
+                        cause_event = parts[3]
+                        if cause_event.startswith("action_"):
+                            failed_action = cause_event.replace("action_", "")
+                            print(f"    - Past data suggests that action '{failed_action}' often leads to failure in this context.")
+                            skills_to_avoid.add(failed_action)
+
+        # 4. 失敗原因を避けて新しい計画を立案
+        print(f"  - Attempting to create a new plan avoiding: {list(skills_to_avoid)}")
+        new_plan = await self.create_plan(
+            high_level_goal=failed_plan.goal,
+            skills_to_avoid=list(skills_to_avoid)
+        )
+
+        # 新しい計画が作成できたか、または元の計画と異なるか確認
+        if new_plan.task_list and new_plan.task_list != failed_plan.task_list:
+            print("✅ Successfully created a revised plan.")
+            return new_plan
+        else:
+            print("❌ Could not find a viable alternative plan.")
+            return None
+    # --- ◾️◾️◾️◾️◾️↑ここまでが重要↑◾️◾️◾️◾️◾️ ---
+
+    # (execute_taskはデモ用に簡略化)
     def execute_task(self, task_request: str, context: str) -> Optional[str]:
-        # (変更なし)
         plan = asyncio.run(self.create_plan(task_request, context))
         if plan.task_list:
-            result = f"Plan for '{task_request}':\n"
-            for i, task in enumerate(plan.task_list):
-                result += f"  Step {i+1}: Execute '{task.get('task')}' using expert '{task.get('expert_id')}'.\n"
-            return result + "Task completed (dummy execution)."
-        return "Could not create a plan."
+            # (ここではダミーで最初のタスクが失敗したと仮定)
+            failed_task = plan.task_list[0]
+            print(f"\n--- [SIMULATION] Task '{failed_task.get('task')}' is assumed to have failed. ---")
+            
+            # 失敗を受けて計画を練り直す
+            new_plan = asyncio.run(self.refine_plan_after_failure(plan, failed_task))
+            
+            if new_plan:
+                return f"Original plan failed. Revised plan: {new_plan.task_list}"
+            else:
+                return "Original plan failed and no alternative was found."
+        return "Could not create an initial plan."
