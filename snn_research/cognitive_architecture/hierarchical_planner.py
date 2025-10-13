@@ -1,9 +1,9 @@
 # ファイルパス: snn_research/cognitive_architecture/hierarchical_planner.py
 # (修正)
-# mypyエラー[arg-type]を解消するため、skills_to_avoidセットにNoneが含まれないようにし、
-# 最終的にlist[str]に変換する処理を明確化。
+# 循環インポートエラーを解消するため、TYPE_CHECKINGを使用して
+# Memoryの型ヒントを解決する。
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 import torch
 from transformers import AutoTokenizer
 import asyncio
@@ -11,7 +11,11 @@ import asyncio
 from .planner_snn import PlannerSNN
 from snn_research.distillation.model_registry import ModelRegistry
 from .rag_snn import RAGSystem
-from snn_research.agent.memory import Memory
+
+# --- ▼ 修正 ▼ ---
+if TYPE_CHECKING:
+    from snn_research.agent.memory import Memory
+# --- ▲ 修正 ▲ ---
 
 class Plan:
     def __init__(self, goal: str, task_list: List[Dict[str, Any]]):
@@ -25,7 +29,9 @@ class HierarchicalPlanner:
         self,
         model_registry: ModelRegistry,
         rag_system: RAGSystem,
-        memory: Memory,
+        # --- ▼ 修正 ▼ ---
+        memory: "Memory",
+        # --- ▲ 修正 ▲ ---
         planner_model: Optional[PlannerSNN] = None,
         tokenizer_name: str = "gpt2",
         device: str = "cpu"
@@ -74,7 +80,9 @@ class HierarchicalPlanner:
         if skills_to_avoid is None: skills_to_avoid = []
         print(f"🌍 Creating plan for goal: {high_level_goal}, avoiding skills: {skills_to_avoid}")
         self.SKILL_MAP = await self._build_skill_map()
+        
         task_list = self._create_rule_based_plan(high_level_goal, skills_to_avoid)
+
         print(f"✅ Plan created with {len(task_list)} step(s).")
         return Plan(goal=high_level_goal, task_list=task_list)
 
@@ -87,12 +95,10 @@ class HierarchicalPlanner:
         causal_query = f"The action '{failed_task.get('task')}' resulted in a failure while pursuing the goal '{failed_plan.goal}'."
         similar_failures = self.memory.retrieve_similar_experiences(causal_query=causal_query, top_k=3)
 
-        # --- ▼ 修正 ▼ ---
         skills_to_avoid_set: set[str] = set()
         failed_task_name = failed_task.get('task')
         if failed_task_name:
             skills_to_avoid_set.add(failed_task_name)
-        # --- ▲ 修正 ▲ ---
 
         if similar_failures:
             print("  - Found similar past failures. Analyzing causes...")
@@ -106,15 +112,13 @@ class HierarchicalPlanner:
                             failed_action = cause_event.replace("action_", "")
                             print(f"    - Past data suggests that action '{failed_action}' often leads to failure in this context.")
                             skills_to_avoid_set.add(failed_action)
-
-        # --- ▼ 修正 ▼ ---
+        
         skills_to_avoid_list = list(skills_to_avoid_set)
         print(f"  - Attempting to create a new plan avoiding: {skills_to_avoid_list}")
         new_plan = await self.create_plan(
             high_level_goal=failed_plan.goal,
             skills_to_avoid=skills_to_avoid_list
         )
-        # --- ▲ 修正 ▲ ---
 
         if new_plan.task_list and new_plan.task_list != failed_plan.task_list:
             print("✅ Successfully created a revised plan.")
