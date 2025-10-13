@@ -1,6 +1,4 @@
 # matsushibadenki/snn4/snn_research/models/spiking_transformer.py
-# スパイキングトランスフォーマーモデル
-# 概要: SpikeDrivenSelfAttentionを組み合わせて、完全なトランスフォーマーブロックとモデルを構築する。
 
 # [!!DEPRECATION WARNING!!]
 # このファイルは旧バージョンの実装です。
@@ -22,12 +20,12 @@ class SpikingTransformerBlock(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout=0.1):
         super().__init__()
         self.attention = SpikeDrivenSelfAttention(embed_dim, num_heads)
-        self.lif1 = LIFNeuron()
+        self.lif1 = LIFNeuron(n_neurons=embed_dim, neuron_params={'tau_mem': 10.0, 'v_threshold': 1.0, 'v_reset': 0.0, 'v_rest': 0.0})
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
         self.ffn = nn.Sequential(
             nn.Linear(embed_dim, 4 * embed_dim),
-            LIFNeuron(),
+            LIFNeuron(n_neurons=4 * embed_dim, neuron_params={'tau_mem': 10.0, 'v_threshold': 1.0, 'v_reset': 0.0, 'v_rest': 0.0}),
             nn.Linear(4 * embed_dim, embed_dim),
         )
         self.dropout = nn.Dropout(dropout)
@@ -37,7 +35,7 @@ class SpikingTransformerBlock(nn.Module):
         x = self.norm1(x + self.dropout(attn_output))
         ffn_output = self.ffn(x)
         x = self.norm2(x + self.dropout(ffn_output))
-        spikes, _ = self.lif1(x)
+        spikes = self.lif1(x.view(-1, x.size(-1))).view(x.size())
         return spikes
 
 class SpikingTransformer(nn.Module):
