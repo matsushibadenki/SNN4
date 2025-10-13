@@ -1,5 +1,6 @@
 # matsushibadenki/snn4/snn_research/distillation/knowledge_distillation_manager.py
 # タイトル: 知識蒸留マネージャー
+# 機能説明: 知識蒸留プロセスを統括するマネージャークラス。
 # BugFix: データセット側で入力とターゲットのペアを正しく作成するように修正し、
 #         collate_fnを簡素化することで、学習データの不整合問題を解消。
 # BugFix: ファイル内にあった不正な閉じ括弧を削除し、mypyの構文エラーを修正。
