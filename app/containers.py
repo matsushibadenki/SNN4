@@ -159,7 +159,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     standard_trainer = providers.Factory(
         BreakthroughTrainer,
-        criterion=providers.Factory(CombinedLoss, **(config.training.gradient_based.loss.to_dict() or {}), tokenizer=tokenizer),
+        criterion=providers.Factory(CombinedLoss, **config.training.gradient_based.loss, tokenizer=tokenizer),
         grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir,
@@ -167,7 +167,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     distillation_trainer = providers.Factory(
         DistillationTrainer,
-         criterion=providers.Factory(DistillationLoss, **(config.training.gradient_based.distillation.loss.to_dict() or {}), tokenizer=tokenizer),
+         criterion=providers.Factory(DistillationLoss, **config.training.gradient_based.distillation.loss, tokenizer=tokenizer),
         grad_clip_norm=config.training.gradient_based.grad_clip_norm,
         use_amp=config.training.gradient_based.use_amp,
         log_dir=config.training.log_dir,
@@ -185,7 +185,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
     physics_informed_trainer = providers.Factory(
         PhysicsInformedTrainer,
-         criterion=providers.Factory(PhysicsInformedLoss, **(config.training.physics_informed.loss.to_dict() or {}), tokenizer=tokenizer),
+         criterion=providers.Factory(PhysicsInformedLoss, **config.training.physics_informed.loss, tokenizer=tokenizer),
         grad_clip_norm=config.training.physics_informed.grad_clip_norm,
         use_amp=config.training.physics_informed.use_amp,
         log_dir=config.training.log_dir,
