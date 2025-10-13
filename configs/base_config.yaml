@@ -38,37 +38,35 @@ training:
     loss:
       ce_weight: 1.0
       spike_reg_weight: 0.001
-      sparsity_reg_weight: 0.0
-      mem_reg_weight: 0.00001
-      ewc_weight: 400.0 # EWCの強度係数。0で無効。
+      sparsity_reg_weight: 0.00001 # 追加
+      mem_reg_weight: 0.0          # 0に変更
+      ewc_weight: 400.0 
     distillation:
       teacher_model: "gpt2"
       loss:
         ce_weight: 0.3
         distill_weight: 0.7
         spike_reg_weight: 0.001
-        sparsity_reg_weight: 0.0
-        mem_reg_weight: 0.00001
+        sparsity_reg_weight: 0.00001 # 追加
+        mem_reg_weight: 0.0          # 0に変更
         temperature: 2.0
 
   biologically_plausible:
-    learning_rule: "CAUSAL_TRACE" # デフォルトの学習則
-    # --- 適応的因果スパース化 ---
+    learning_rule: "CAUSAL_TRACE" 
     adaptive_causal_sparsification:
       enabled: false
-      contribution_threshold: 0.01 # この貢献度以下のシナプスは学習を抑制
-    # --- パーティクルフィルタ (確率的アンサンブル) ---
+      contribution_threshold: 0.01 
     particle_filter:
       enabled: false
-      num_particles: 20 # アンサンブルを構成するモデル（パーティクル）の数
-      noise_std: 0.05   # 各パーティクルに加えるノイズの標準偏差
+      num_particles: 20 
+      noise_std: 0.05   
     neuron:
       tau_mem: 10.0
       v_threshold: 1.0
       v_reset: 0.0
       v_rest: 0.0
-      threshold_decay: 0.99 # 時間経過による動的閾値の減衰率
-      threshold_step: 0.05  # スパイク後の閾値の上昇量
+      threshold_decay: 0.99 
+      threshold_step: 0.05  
     stdp:
       tau_trace: 20.0
       learning_rate: 0.005
@@ -119,7 +117,7 @@ training:
   log_interval: 1
   
 model_registry:
-  provider: "file"  # "file" or "distributed"
+  provider: "file"
   file:
     path: "runs/model_registry.json"
   redis:
