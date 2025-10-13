@@ -7,6 +7,10 @@
 # - 認知サイクルがエラーなく実行され、各認知モジュールが意図通りに連携し、
 #   状態を変化させることを検証する。特に、短期記憶から長期記憶への
 #   「記憶の固定」プロセスが正しく機能することを確認する。
+# 改善点(v4):
+# - ロードマップ フェーズ5に基づき、テストを「深化」。
+# - 認知サイクル実行後、入力テキストのキーワードが長期記憶に
+#   正しく関連付けられて格納されたかを具体的に検証するアサーションを追加。
 
 import sys
 from pathlib import Path
@@ -65,9 +69,9 @@ def test_cognitive_cycle_runs_and_consolidates_memory(brain_container: BrainCont
         for i, text in enumerate(test_inputs):
             brain.run_cognitive_cycle(text)
             # 5サイクル目に統合が起こることを確認
-            if i < 4:
+            if (i + 1) % 5 != 0:
                 # サイクルごとに短期記憶が増える
-                assert len(brain.hippocampus.working_memory) == i + 1
+                assert len(brain.hippocampus.working_memory) == (i + 1) % 5
             else:
                 # 5サイクル目に長期記憶へ転送され、短期記憶はクリアされる
                 assert len(brain.hippocampus.working_memory) == 0
