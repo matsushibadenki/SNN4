@@ -4,10 +4,11 @@
 # Description:
 # - snn_4_ann_parity_plan.md に基づく、学習バックエンドの多様化の一環。
 # - snnTorchライブラリを使用してSpikingTransformerモデルを実装する。
+# - mypyエラー[import-untyped]を解消するため、type: ignoreを追加。
 
 import torch
 import torch.nn as nn
-import snntorch as snn
+import snntorch as snn  # type: ignore
 from snntorch import surrogate
 from typing import Tuple, Dict, Any, List
 
