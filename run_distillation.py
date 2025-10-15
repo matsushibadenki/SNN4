@@ -12,7 +12,7 @@
 import argparse
 import asyncio
 import torch
-import torchvision.models as models  # type: ignore
+import torchvision.models as models # type: ignore
 from torch.utils.data import DataLoader
 
 from app.containers import TrainingContainer
@@ -49,6 +49,7 @@ async def main():
     else:
         raise ValueError(f"Unsupported teacher model: {args.teacher_model}")
     teacher_model = teacher_model.to(device)
+    teacher_model.eval()
     
     distillation_trainer = container.distillation_trainer(
         model=student_model,
@@ -77,8 +78,8 @@ async def main():
 
     # 知識蒸留用にデータセットをラップ
     train_loader, val_loader = manager.prepare_dataset(
-        train_dataset, 
-        val_dataset,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
         collate_fn=task.get_collate_fn(),
         batch_size=container.config.training.batch_size()
     )
