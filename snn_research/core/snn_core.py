@@ -2,7 +2,7 @@
 #
 # Title: SNN Core Models
 # Description: This file defines the core SNN architectures for the project.
-# (修正): mypyエラー[operator]を解消するため、set_statefulの呼び出しを修正。
+# (修正): 根本的な構文エラーを解消するため、ヘッダーコメントを再生成しました。
 
 import torch
 import torch.nn as nn
@@ -226,7 +226,6 @@ class SpikingTransformer(BaseModel):
         
         for layer in self.layers:
             block = cast(STAttenBlock, layer)
-            # 修正: base.MemoryModuleにキャストしてset_statefulを呼び出す
             cast(base.MemoryModule, block.lif1).set_stateful(True)
             cast(base.MemoryModule, block.lif2).set_stateful(True)
             cast(base.MemoryModule, block.lif3).set_stateful(True)
@@ -237,7 +236,6 @@ class SpikingTransformer(BaseModel):
         
         for layer in self.layers:
             block = cast(STAttenBlock, layer)
-            # 修正: base.MemoryModuleにキャストしてset_statefulを呼び出す
             cast(base.MemoryModule, block.lif1).set_stateful(False)
             cast(base.MemoryModule, block.lif2).set_stateful(False)
             cast(base.MemoryModule, block.lif3).set_stateful(False)
