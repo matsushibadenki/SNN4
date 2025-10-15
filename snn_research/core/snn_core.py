@@ -7,6 +7,7 @@
 #   インスタンス化できるようにした。
 # 修正(mypy): [import-untyped]エラーを解消するため、torchvisionのインポートに
 #             type: ignoreを追加。
+# 修正(syntax): 不正なコメントマーカーを削除。
 
 import torch
 import torch.nn as nn
@@ -377,8 +378,6 @@ class SNNCore(nn.Module):
         
         # vocab_sizeはテキストベースのモデルにのみ渡す
         if model_type in ["hybrid_cnn_snn"]:
-             # Hybridモデルは画像入力を想定しているため、vocab_sizeを直接渡さない
-             # 代わりに、最終的な出力クラス数を渡す必要があるが、ここでは暫定的にvocab_sizeを使用
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
         else:
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
