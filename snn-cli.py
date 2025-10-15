@@ -5,6 +5,7 @@
 #   単一のインターフェースから制御するためのコマンドラインツール。
 #   Typerライブラリを使用し、サブコマンド形式で機能を提供する。
 # 改善点(v2): 各サブコマンドの引数を、呼び出し先のスクリプトと完全に一致するように修正・統一。
+# 改善点(v3): benchmark runコマンドにmrpc_comparisonを追加。
 import typer
 from typing import Optional, List
 import subprocess
@@ -137,7 +138,7 @@ def ui(
 
 @benchmark_app.command("run")
 def benchmark_run(
-    experiment: str = typer.Option("all", help="実行する実験 (all, cifar10_comparison, sst2_comparison)"),
+    experiment: str = typer.Option("all", help="実行する実験 (all, cifar10_comparison, sst2_comparison, mrpc_comparison)"),
     tag: Optional[str] = typer.Option(None, help="実験にカスタムタグを付ける"),
     epochs: int = typer.Option(3, help="訓練のエポック数"),
     batch_size: int = typer.Option(32, help="バッチサイズ"),
