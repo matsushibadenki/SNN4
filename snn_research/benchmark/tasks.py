@@ -125,7 +125,7 @@ class _GLUEBinaryClassificationTask(BenchmarkTask):
         true_labels: List[int] = []
         pred_labels: List[int] = []
         total_spikes = 0
-        num_neurons = cast(int, sum(p.numel() for p in model.parameters()))
+        num_neurons = int(sum(p.numel() for p in model.parameters()))
         
         with torch.no_grad():
             for batch in tqdm(loader, desc=f"Evaluating {self.task_name.upper()}"):
@@ -204,7 +204,7 @@ class CIFAR10Task(BenchmarkTask):
         true_labels: List[int] = []
         pred_labels: List[int] = []
         total_spikes = 0
-        num_neurons = cast(int, sum(p.numel() for p in model.parameters()))
+        num_neurons = int(sum(p.numel() for p in model.parameters()))
 
         with torch.no_grad():
             for batch in tqdm(loader, desc="Evaluating CIFAR-10"):
@@ -234,4 +234,3 @@ class CIFAR10Task(BenchmarkTask):
             "avg_spikes": avg_spikes,
             "estimated_energy_j": energy_j,
         }
-
