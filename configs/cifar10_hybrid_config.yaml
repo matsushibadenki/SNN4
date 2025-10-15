@@ -1,30 +1,10 @@
-# ファイルパス: configs/cifar10_hybrid_config.yaml
-# (新規作成)
-# Title: Hybrid CNN-SNNモデル CIFAR-10用設定
-# Description:
-# snn_4_ann_parity_plan.mdに基づき、CIFAR-10データセットで
-# Hybrid CNN-SNNモデルを訓練・評価するための設定ファイル。
-
-# データ設定は `scripts/train_classifier.py` がタスク定義から取得するため、
-# ここではモデル設定に集中する。
-
+# ファイルパス: configs/cifar10_spikingcnn_config.yaml
+# (旧: configs/cifar10_hybrid_config.yaml)
+# Title: SpikingCNNモデル CIFAR-10用設定
+# Description: CIFAR-10データセットでSpikingCNNモデルを訓練・評価するための設定ファイル。
 model:
-  path: "hybrid_cnn_snn_cifar10.pth"
-  architecture_type: "hybrid_cnn_snn"
+  path: "spiking_cnn_cifar10.pth"
+  architecture_type: "spiking_cnn"
   time_steps: 16
-
-  # ANNフロントエンド設定 (MobileNetV2)
-  ann_frontend:
-    name: "mobilenet_v2"
-    pretrained: true
-    output_features: 1280
-
-  # SNNバックエンド設定 (Spiking Transformer)
-  snn_backend:
-    d_model: 1280
-    n_head: 8
-    num_layers: 4
-
-  # ニューロン設定
   neuron:
     type: "lif"
