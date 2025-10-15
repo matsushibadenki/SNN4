@@ -7,6 +7,7 @@
 # - 改善点 (v4): 継続学習(EWC)のためのFisher行列計算処理を追加。
 # - 改善点 (snn_4_ann_parity_plan): 量子化認識学習(QAT)の適用ロジックを追加。
 # - 改善点 (snn_4_ann_parity_plan): 学習後の構造的プルーニング機能を追加。
+# - 修正(mypy): [arg-type]エラーを解消するため、castを使用して型を明示。
 
 import argparse
 import os
@@ -16,7 +17,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split, DistributedSampler
 from dependency_injector.wiring import inject, Provide
-from typing import Optional, Tuple, List, Dict, Any, Callable
+from typing import Optional, Tuple, List, Dict, Any, Callable, cast
 
 from app.containers import TrainingContainer
 from snn_research.data.datasets import get_dataset_class, DistillationDataset, DataFormat, SNNBaseDataset
@@ -106,6 +107,7 @@ def train(
         snn_model: nn.Module = container.snn_model().to(device)
 
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
+            from snn_research.training.quantization import apply_qat
             snn_model.to('cpu')
             snn_model = apply_qat(snn_model)
             snn_model.to(device)
@@ -160,7 +162,8 @@ def train(
 
     # 学習完了後、QATモデルの変換やプルーニングを実行
     if rank in [-1, 0]:
-        final_model = trainer.model.module if is_distributed else trainer.model
+        final_model_unwrapped = trainer.model.module if is_distributed else trainer.model
+        final_model = cast(nn.Module, final_model_unwrapped)
         
         # QATが有効な場合、量子化モデルに変換して保存
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
