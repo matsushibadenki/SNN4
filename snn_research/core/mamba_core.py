@@ -5,11 +5,14 @@
 # - 循環インポートエラーを解消するため、BaseModelとSNNLayerNormの
 #   インポート元を `snn_core` から新しい `base` モジュールに変更。
 # - AdaptiveLIFNeuronに渡すパラメータをフィルタリングし、エラーを防止。
+# 改善(snn_4_ann_parity_plan):
+# - ニューロンのタイプをハードコーディングせず、コンストラクタで
+#   neuron_classを受け取るように修正。
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any, Optional, Type
 from omegaconf import DictConfig
 import math
 
@@ -21,17 +24,13 @@ class SpikingMambaBlock(nn.Module):
     Spiking-MAMBAの基本ブロック。
     選択的SSMをスパイクベースで実装。
     """
-    def __init__(self, d_model: int, d_state: int, d_conv: int, expand: int, neuron_config: Dict[str, Any]):
+    def __init__(self, d_model: int, d_state: int, d_conv: int, expand: int, neuron_class: Type[nn.Module], neuron_params: Dict[str, Any]):
         super().__init__()
         self.d_model = d_model
         self.d_state = d_state
         self.d_conv = d_conv
         self.expand = expand
         self.d_inner = d_model * expand
-
-        # AdaptiveLIFNeuronに渡すパラメータをフィルタリング
-        lif_params = neuron_config.copy()
-        lif_params.pop('type', None)
 
         self.in_proj = nn.Linear(d_model, self.d_inner * 2)
         self.conv1d = nn.Conv1d(
@@ -42,7 +41,7 @@ class SpikingMambaBlock(nn.Module):
             groups=self.d_inner,
             padding=d_conv - 1,
         )
-        self.lif_conv = AdaptiveLIFNeuron(features=self.d_inner, **lif_params)
+        self.lif_conv = neuron_class(features=self.d_inner, **neuron_params)
         self.x_proj = nn.Linear(self.d_inner, self.d_inner + 2 * d_state)
         self.dt_proj = nn.Linear(self.d_inner, self.d_inner)
         A = torch.arange(1, d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
@@ -50,7 +49,7 @@ class SpikingMambaBlock(nn.Module):
         self.D = nn.Parameter(torch.ones(self.d_inner))
         self.out_proj = nn.Linear(self.d_inner, d_model)
         self.norm = SNNLayerNorm(d_model)
-        self.lif_out = AdaptiveLIFNeuron(features=d_model, **lif_params)
+        self.lif_out = neuron_class(features=d_model, **neuron_params)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, L, D = x.shape
@@ -84,9 +83,15 @@ class SpikingMamba(BaseModel):
     def __init__(self, vocab_size: int, d_model: int, d_state: int, d_conv: int, expand: int, num_layers: int, time_steps: int, neuron_config: Dict[str, Any], **kwargs: Any):
         super().__init__()
         self.time_steps = time_steps
+
+        neuron_type = neuron_config.get("type", "lif")
+        neuron_params = neuron_config.copy()
+        neuron_params.pop('type', None)
+        neuron_class = AdaptiveLIFNeuron if neuron_type == 'lif' else IzhikevichNeuron
+        
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.layers = nn.ModuleList([
-            SpikingMambaBlock(d_model, d_state, d_conv, expand, neuron_config)
+            SpikingMambaBlock(d_model, d_state, d_conv, expand, neuron_class, neuron_params)
             for _ in range(num_layers)
         ])
         self.norm = SNNLayerNorm(d_model)
@@ -106,4 +111,3 @@ class SpikingMamba(BaseModel):
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
         mem = torch.tensor(0.0, device=input_ids.device) 
         return logits, avg_spikes, mem
-
