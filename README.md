@@ -11,10 +11,10 @@
 ## **2\. 主な特徴**
 
 * **🧠 脳型認知アーキテクチャ:** 知覚、記憶、情動、意思決定、行動までの一貫した認知サイクルをシミュレートする「人工脳」を実装しています。  
-* **🚀 最先端SNNモデル群:** Spiking Transformer, Spiking Mamba, Hybrid CNN-SNNなど、複数の先進的SNNアーキテクチャを実装。タスクに応じて最適なモデルを選択・生成します。  
+* **🚀 最先端SNNモデル群:** Spiking Transformer, Spiking Mamba, SpikingCNNなど、複数の先進的SNNアーキテクチャを実装。タスクに応じて最適なモデルを選択・生成します。  
 * **📚 オンデマンド学習と知識蒸留:** 未知のタスクに直面した際、Web検索や大規模言語モデルからの知識蒸留により、タスク特化型の超省エネルギーな「専門家SNN」を自律的に生成します。  
 * **🧬 自己進化するアーキテクチャ:** 自身の性能をメタ認知的に評価し、モデルの層数や次元数、さらには**学習パラダイム自体**をも自律的に修正し、より強力なアーキテクチャへと進化します。  
-* **📊 ANN vs SNN 統合ベンチマーク:** 統一された環境でANNとSNNの性能（精度、速度、エネルギー効率）を直接比較し、レポートを自動生成するベンチマークスイートを搭載しています。  
+* **📊 ANN vs SNN 統合ベンチマーク:** 統一された環境でANNとSNNの性能（精度、速度、エネルギー効率）を直接比較し、結果をリーダーボード形式で自動的に追記・管理します。  
 * **🔧 統合CLIツール (snn-cli.py):** 学習、推論、自己進化、人工脳シミュレーションまで、プロジェクトの全機能を単一のインターフェースから制御可能です。
 
 ## **3\. システムアーキテクチャ**
@@ -74,7 +74,6 @@ graph TD
     Training -->|"学習則を利用"| Rules
 ```
 
-
 ## **4\. システムの実行方法**
 
 ### **ステップ1: 環境設定**
@@ -89,13 +88,31 @@ pip install \-r requirements.txt
 
 pytest \-v
 
-### **ステップ3: ANN vs SNN 性能比較ベンチマークの実行**
+### **ステップ3: ANN vs SNN 性能比較**
 
-**目的:** snn\_4\_ann\_parity\_plan.mdに基づき、標準的な画像分類タスク（CIFAR-10）でANNとSNNの性能（精度、速度、エネルギー効率）を直接比較します。
+snn\_4\_ann\_parity\_plan.mdに基づき、標準的なベンチマークでANNとSNNの性能を直接比較・評価します。
 
-python scripts/run\_benchmark\_suite.py \--experiment cifar10\_comparison \--epochs 5
+#### **ワークフロー1: 直接学習による性能比較**
 
-実験完了後、結果はbenchmarks/cifar10\_ann\_vs\_snn\_report.mdにMarkdown形式のレポートとして自動的に保存されます。このレポートが、ANN性能パリティに向けたプロジェクトの進捗を示す重要な指標となります。
+**A) 画像分類タスク (CIFAR-10)**
+
+snn-cli benchmark run \--experiment cifar10\_comparison \--epochs 5 \--tag "direct\_learning\_cnn"
+
+**B) 自然言語処理タスク (SST-2 感情分析)**
+
+snn-cli benchmark run \--experiment sst2\_comparison \--epochs 3 \--tag "direct\_learning\_transformer"
+
+実験完了後、結果はbenchmarks/ディレクトリにリーダーボード形式で自動的に追記・保存されます。
+
+#### **ワークフロー2: ANN-SNN変換による性能評価**
+
+1. まず、ベースとなるANNモデルを訓練します。  
+   (この例では、訓練済みのANNモデル ann\_model.pth が存在すると仮定します。)  
+2. **次に、学習済みのANNの重みをSNNに変換します。**  
+   snn-cli convert ann2snn-cnn ann\_model.pth converted\_snn\_model.pth
+
+3. 最後に、変換されたSNNモデルの性能を評価します。  
+   (このステップは、run\_benchmark\_suite.pyを改造して評価のみを行うモードを追加することで実現できます。)
 
 ### **ステップ4: 本格実行 \- 大規模学習と対話**
 
@@ -103,72 +120,13 @@ python scripts/run\_benchmark\_suite.py \--experiment cifar10\_comparison \--epo
 
 #### **4-1: 大規模データセットの準備（初回のみ）**
 
-wikitext-103（100万行以上のテキスト）をダウンロードし、学習用に整形します。
-
 python scripts/data\_preparation.py
 
 #### **4-2: 本格的な学習の実行**
 
-**A) 推奨：最強エンジン（Ultraモデル）の学習**
-
-以下のコマンド一つで、データ準備から最大規模のSpiking Transformerモデルの学習までを自動的に実行します。
-
-python snn-cli.py train-ultra \--override\_config "training.epochs=50"
-
-**B) 通常モデルの学習**
-
-特定のモデル構成で学習させたい場合は、agent solveコマンドを使用します。
-
-python snn-cli.py agent solve \\  
-    \--task "汎用言語モデル" \\  
-    \--force-retrain
-
-**Note:** これらの学習はマシンスペックにより数時間以上かかる可能性があります。
+\# 推奨：最強エンジン（Ultraモデル）の学習  
+snn-cli train-ultra \--override\_config "training.epochs=50"
 
 #### **4-3: 学習済みモデルとの対話**
 
-学習済みのモデルを呼び出して対話します。--model\_configで使用したいモデルの設定ファイルを指定してください。
-
-\# Ultraモデルとの対話  
-python snn-cli.py ui start \--model\_config configs/models/ultra.yaml
-
-\# もしくは、特定のタスクを実行  
-python snn-cli.py agent solve \\  
-    \--task "汎用言語モデル" \\  
-    \--prompt "SNNとは何ですか？"
-
-### **ステップ5: 高度な機能の探求**
-
-その他の高度な機能（Webからの自律学習、自己進化、人工脳シミュレーションなど）については、doc/SNN開発：プロジェクト機能テスト コマンド一覧.mdをご参照ください。
-
-## **5\. プロジェクト構造**
-
-snn4/  
-├── app/                  \# UIアプリケーションとDIコンテナ  
-├── benchmarks/           \# (自動生成) ベンチマーク結果レポート  
-├── configs/              \# 設定ファイル (base, models/\*.yaml)  
-├── data/                 \# 学習用データセット  
-├── doc/                  \# ドキュメント  
-├── runs/                 \# (自動生成) 学習ログ、チェックポイント、モデル登録簿  
-├── scripts/              \# データ準備やベンチマークなどの補助スクリプト  
-├── snn\_research/         \# SNNコア研究開発コード  
-│   ├── agent/            \# 各種エージェント (自律、自己進化、生命体、強化学習)  
-│   ├── benchmark/        \# SNN vs ANN 性能評価タスク定義  
-│   ├── cognitive\_architecture/ \# 高次認知機能 (プランナー、人工脳など)  
-│   ├── communication/    \# エージェント間通信  
-│   ├── conversion/       \# ANN-SNNモデル変換  
-│   ├── core/             \# SNNモデル (BreakthroughSNN, SpikingTransformer, Hybrid)  
-│   ├── data/             \# データセット定義  
-│   ├── deployment.py     \# 推論エンジン  
-│   ├── distillation/     \# 知識蒸留とモデル登録簿  
-│   ├── hardware/         \# ニューロモーフィックハードウェア関連  
-│   ├── io/               \# 感覚入力・運動出力  
-│   ├── learning\_rules/   \# 生物学的学習則 (STDPなど)  
-│   ├── models/           \# (旧) モデルアーキテクチャ  
-│   ├── rl\_env/           \# 強化学習環境  
-│   ├── tools/            \# 外部ツール (Webクローラーなど)  
-│   └── training/         \# Trainer、損失関数、量子化、プルーニング  
-├── tests/                \# テストコード  
-├── snn-cli.py            \# ✨ 統合CLIツール  
-├── train.py              \# 勾配ベース学習の実行スクリプト (CLIから呼び出される)  
-└── requirements.txt      \# 必要なライブラリ  
+snn-cli ui start \--model\_config configs/models/ultra.yaml  
