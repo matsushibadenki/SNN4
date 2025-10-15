@@ -8,6 +8,7 @@
 # 改善(snn_4_ann_parity_plan):
 # - ニューロンのタイプをハードコーディングせず、コンストラクタで
 #   neuron_classを受け取るように修正。
+# 修正(mypy): [name-defined]エラーを解消するため、IzhikevichNeuronをインポート。
 
 import torch
 import torch.nn as nn
@@ -16,7 +17,7 @@ from typing import Tuple, Dict, Any, Optional, Type
 from omegaconf import DictConfig
 import math
 
-from .neurons import AdaptiveLIFNeuron
+from .neurons import AdaptiveLIFNeuron, IzhikevichNeuron
 from .base import BaseModel, SNNLayerNorm
 
 class SpikingMambaBlock(nn.Module):
