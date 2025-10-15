@@ -1,0 +1,153 @@
+# ファイルパス: scripts/run_benchmark_suite.py
+# (新規作成)
+# Title: 統合ベンチマークスイート
+# Description:
+# snn_4_ann_parity_plan.mdの計画に基づき、複数のベンチマーク実験を
+# 体系的に実行し、結果をレポートとして保存するためのスクリプト。
+# これにより、ANNとSNNの性能比較を定量的かつ再現可能な形で追跡する。
+
+import argparse
+import time
+import pandas as pd
+import torch
+import torch.nn as nn
+from torch.optim import AdamW
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from pathlib import Path
+import sys
+from typing import Dict, List, Any
+
+# プロジェクトルートをPythonパスに追加
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+from snn_research.benchmark import TASK_REGISTRY
+from app.utils import get_auto_device
+from transformers import AutoTokenizer
+
+def train_and_evaluate_model(
+    model_type: str,
+    task,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    device: str,
+    epochs: int,
+    learning_rate: float
+) -> Dict[str, Any]:
+    """
+    指定されたモデルタイプの訓練と評価を行うヘルパー関数。
+    """
+    print("\n" + "="*20 + f" 🚀 Starting Experiment for: {model_type} on {task.__class__.__name__} " + "="*20)
+    
+    # vocab_sizeは画像タスクでは使用しないが、インターフェースを合わせるために渡す
+    model = task.build_model(model_type, vocab_size=10).to(device)
+    
+    criterion = nn.CrossEntropyLoss()
+    optimizer = AdamW(model.parameters(), lr=learning_rate)
+    
+    for epoch in range(epochs):
+        model.train()
+        train_progress = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [{model_type} Training]")
+        for batch in train_progress:
+            inputs = {k: v.to(device) for k, v in batch.items() if k != 'labels'}
+            labels = batch['labels'].to(device)
+
+            optimizer.zero_grad()
+            
+            outputs = model(**inputs)
+            logits = outputs[0] if isinstance(outputs, tuple) else outputs
+            
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
+            
+            train_progress.set_postfix({"loss": f"{loss.item():.4f}"})
+            
+    # 評価
+    print(f"\n--- Evaluating {model_type} model ---")
+    start_time = time.time()
+    metrics = task.evaluate(model, val_loader)
+    duration = time.time() - start_time
+    
+    metrics["model"] = model_type
+    metrics["eval_time_sec"] = duration
+    
+    print(f"  - Results: {metrics}")
+    return metrics
+
+def run_cifar10_comparison(args: argparse.Namespace) -> pd.DataFrame:
+    """CIFAR-10でANNとSNNの性能を比較する実験を実行する。"""
+    device = get_auto_device()
+    TaskClass = TASK_REGISTRY["cifar10"]
+    task = TaskClass(tokenizer=AutoTokenizer.from_pretrained("gpt2"), device=device, hardware_profile={})
+    
+    train_dataset, val_dataset = task.prepare_data()
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn(), shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn())
+
+    results = []
+    
+    # ANNモデル
+    ann_metrics = train_and_evaluate_model(
+        'ANN', task, train_loader, val_loader, device, args.epochs, args.learning_rate
+    )
+    results.append(ann_metrics)
+    
+    # SNNモデル
+    snn_metrics = train_and_evaluate_model(
+        'SNN', task, train_loader, val_loader, device, args.epochs, args.learning_rate
+    )
+    results.append(snn_metrics)
+    
+    return pd.DataFrame(results)
+
+def save_report(df: pd.DataFrame, output_dir: str, experiment_name: str):
+    """実験結果をMarkdown形式で保存する。"""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    report_path = output_path / f"{experiment_name}_report.md"
+
+    # 効率改善率を計算
+    if 'estimated_energy_j' in df.columns:
+        snn_row = df[df['model'] == 'SNN']
+        ann_row = df[df['model'] == 'ANN']
+        if not snn_row.empty and not ann_row.empty:
+            snn_energy = snn_row['estimated_energy_j'].iloc[0]
+            ann_energy = ann_row['estimated_energy_j'].iloc[0]
+            if ann_energy > 0 and snn_energy is not None:
+                efficiency_gain = (1 - (snn_energy / ann_energy)) * 100
+                df['efficiency_gain_%'] = [f"{efficiency_gain:.2f}%" if m == 'SNN' else '-' for m in df['model']]
+
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write(f"# Benchmark Report: {experiment_name.replace('_', ' ').title()}\n\n")
+        f.write(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("## 📊 Summary\n\n")
+        f.write(df.to_markdown(index=False))
+        f.write("\n\n## ⚙️ Experiment Configuration\n\n")
+        f.write(f"- Epochs: {args.epochs}\n")
+        f.write(f"- Batch Size: {args.batch_size}\n")
+        f.write(f"- Learning Rate: {args.learning_rate}\n")
+        f.write(f"- Device: {get_auto_device()}\n")
+
+    print(f"\n✅ ベンチマークレポートを '{report_path}' に保存しました。")
+
+
+def main(args: argparse.Namespace):
+    """ベンチマークスイートのメイン関数。"""
+    if args.experiment == "all" or args.experiment == "cifar10_comparison":
+        results_df = run_cifar10_comparison(args)
+        save_report(results_df, args.output_dir, "cifar10_ann_vs_snn")
+    else:
+        print(f"Unknown experiment: {args.experiment}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="SNN vs ANN Benchmark Suite")
+    parser.add_argument("--experiment", type=str, default="all", choices=["all", "cifar10_comparison"], help="実行する実験を選択します。")
+    parser.add_argument("--epochs", type=int, default=3, help="訓練のエポック数。")
+    parser.add_argument("--batch_size", type=int, default=32, help="訓練と評価のバッチサイズ。")
+    parser.add_argument("--learning_rate", type=float, default=1e-4, help="オプティマイザの学習率。")
+    parser.add_argument("--output_dir", type=str, default="benchmarks", help="結果レポートを保存するディレクトリ。")
+    
+    args = parser.parse_args()
+    main(args)
