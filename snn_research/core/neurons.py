@@ -2,6 +2,10 @@
 # (修正)
 # 修正: 論文「Dynamic Threshold and Multi-level Attention」に基づき、
 #       AdaptiveLIFNeuronに動的発火閾値メカニズムを導入。
+# 改善(snn_4_ann_parity_plan):
+# - IzhikevichNeuronにset_statefulメソッドを追加し、AdaptiveLIFNeuronとの
+#   インターフェース互換性を確保。これにより、SpikingTransformerなどで
+#   ニューロンモデルを切り替え可能にする。
 
 from typing import Optional, Tuple
 import torch
@@ -135,11 +139,18 @@ class IzhikevichNeuron(base.MemoryModule):
         self.dt = dt
         self.v_peak = 30.0
         self.surrogate_function = surrogate.ATan(alpha=2.0)
+        self.stateful = False
 
         self.register_buffer("v", None)
         self.register_buffer("u", None)
         self.register_buffer("spikes", torch.zeros(features))
         self.register_buffer("total_spikes", torch.tensor(0.0))
+
+    def set_stateful(self, stateful: bool):
+        """時系列データの処理モードを設定"""
+        self.stateful = stateful
+        if not stateful:
+            self.reset()
 
     def reset(self):
         super().reset()
@@ -152,6 +163,10 @@ class IzhikevichNeuron(base.MemoryModule):
         """
         Processes one timestep of input current with corrected Izhikevich dynamics.
         """
+        if not self.stateful:
+            self.v = None
+            self.u = None
+            
         if self.v is None or self.v.shape != x.shape:
             self.v = torch.full_like(x, self.c)
         if self.u is None or self.u.shape != x.shape:
