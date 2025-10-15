@@ -16,6 +16,9 @@ app.add_typer(agent_app, name="agent")
 benchmark_app = typer.Typer()
 app.add_typer(benchmark_app, name="benchmark")
 
+convert_app = typer.Typer()
+app.add_typer(convert_app, name="convert")
+
 def _run_command(command: List[str]):
     """コマンドを実行し、出力をストリーミングする。"""
     try:
@@ -125,5 +128,16 @@ def benchmark_continual(
     command = ["python", "scripts/run_continual_learning_experiment.py", "--epochs_task_a", str(epochs_task_a), "--epochs_task_b", str(epochs_task_b), "--model_config", model_config]
     _run_command(command)
 
+@convert_app.command("ann2snn-cnn")
+def convert_ann2snn_cnn(
+    ann_model_path: str = typer.Argument(..., help="変換元の学習済みSimpleCNNモデルのパス (.pth)"),
+    output_path: str = typer.Argument(..., help="変換後のSpikingCNNモデルの保存先パス (.pth)"),
+    snn_config_path: str = typer.Option("configs/cifar10_spikingcnn_config.yaml", help="SpikingCNNのモデル設定ファイル"),
+):
+    """学習済みCNN (ANN) をSpikingCNN (SNN) に変換する。"""
+    command = ["python", "scripts/ann2snn_cnn.py", "--ann_model_path", ann_model_path, "--output_path", output_path, "--snn_config_path", snn_config_path]
+    _run_command(command)
+
 if __name__ == "__main__":
     app()
+
