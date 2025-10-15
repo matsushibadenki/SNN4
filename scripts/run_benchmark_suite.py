@@ -6,6 +6,7 @@
 # 体系的に実行し、結果をレポートとして保存するためのスクリプト。
 # これにより、ANNとSNNの性能比較を定量的かつ再現可能な形で追跡する。
 # 修正(mypy): [import-untyped], [name-defined], [abstract], [call-arg]エラーを解消。
+# 改善(snn_4_ann_parity_plan): SST-2感情分析タスクのベンチマーク実験を追加。
 
 import argparse
 import time
@@ -33,15 +34,15 @@ def train_and_evaluate_model(
     val_loader: DataLoader,
     device: str,
     epochs: int,
-    learning_rate: float
+    learning_rate: float,
+    vocab_size: int
 ) -> Dict[str, Any]:
     """
     指定されたモデルタイプの訓練と評価を行うヘルパー関数。
     """
     print("\n" + "="*20 + f" 🚀 Starting Experiment for: {model_type} on {task.__class__.__name__} " + "="*20)
     
-    # vocab_sizeは画像タスクでは使用しないが、インターフェースを合わせるために渡す
-    model = task.build_model(model_type, vocab_size=10).to(device)
+    model = task.build_model(model_type, vocab_size=vocab_size).to(device)
     
     criterion = nn.CrossEntropyLoss()
     optimizer = AdamW(model.parameters(), lr=learning_rate)
@@ -90,17 +91,47 @@ def run_cifar10_comparison(args: argparse.Namespace) -> pd.DataFrame:
     
     # ANNモデル
     ann_metrics = train_and_evaluate_model(
-        'ANN', task, train_loader, val_loader, device, args.epochs, args.learning_rate
+        'ANN', task, train_loader, val_loader, device, args.epochs, args.learning_rate, vocab_size=10
     )
     results.append(ann_metrics)
     
     # SNNモデル
     snn_metrics = train_and_evaluate_model(
-        'SNN', task, train_loader, val_loader, device, args.epochs, args.learning_rate
+        'SNN', task, train_loader, val_loader, device, args.epochs, args.learning_rate, vocab_size=10
     )
     results.append(snn_metrics)
     
     return pd.DataFrame(results)
+
+def run_sst2_comparison(args: argparse.Namespace) -> pd.DataFrame:
+    """SST-2でANNとSNNの性能を比較する実験を実行する。"""
+    device = get_auto_device()
+    TaskClass = TASK_REGISTRY["sst2"]
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    task = TaskClass(tokenizer=tokenizer, device=device, hardware_profile={})
+    
+    train_dataset, val_dataset = task.prepare_data(data_dir="data")
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn(), shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn())
+
+    results = []
+    
+    # ANNモデル
+    ann_metrics = train_and_evaluate_model(
+        'ANN', task, train_loader, val_loader, device, args.epochs, args.learning_rate, vocab_size=tokenizer.vocab_size
+    )
+    results.append(ann_metrics)
+    
+    # SNNモデル
+    snn_metrics = train_and_evaluate_model(
+        'SNN', task, train_loader, val_loader, device, args.epochs, args.learning_rate, vocab_size=tokenizer.vocab_size
+    )
+    results.append(snn_metrics)
+    
+    return pd.DataFrame(results)
+
 
 def save_report(df: pd.DataFrame, output_dir: str, experiment_name: str, args: argparse.Namespace):
     """実験結果をMarkdown形式で保存する。"""
@@ -135,16 +166,29 @@ def save_report(df: pd.DataFrame, output_dir: str, experiment_name: str, args: a
 
 def main(args: argparse.Namespace):
     """ベンチマークスイートのメイン関数。"""
-    if args.experiment == "all" or args.experiment == "cifar10_comparison":
+    if args.experiment == "all":
+        # 全ての実験を実行
+        cifar10_results_df = run_cifar10_comparison(args)
+        save_report(cifar10_results_df, args.output_dir, "cifar10_ann_vs_snn", args)
+        
+        sst2_results_df = run_sst2_comparison(args)
+        save_report(sst2_results_df, args.output_dir, "sst2_ann_vs_snn", args)
+
+    elif args.experiment == "cifar10_comparison":
         results_df = run_cifar10_comparison(args)
         save_report(results_df, args.output_dir, "cifar10_ann_vs_snn", args)
+    
+    elif args.experiment == "sst2_comparison":
+        results_df = run_sst2_comparison(args)
+        save_report(results_df, args.output_dir, "sst2_ann_vs_snn", args)
+
     else:
         print(f"Unknown experiment: {args.experiment}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SNN vs ANN Benchmark Suite")
-    parser.add_argument("--experiment", type=str, default="all", choices=["all", "cifar10_comparison"], help="実行する実験を選択します。")
+    parser.add_argument("--experiment", type=str, default="all", choices=["all", "cifar10_comparison", "sst2_comparison"], help="実行する実験を選択します。")
     parser.add_argument("--epochs", type=int, default=3, help="訓練のエポック数。")
     parser.add_argument("--batch_size", type=int, default=32, help="訓練と評価のバッチサイズ。")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="オプティマイザの学習率。")
