@@ -4,6 +4,7 @@
 # Description: This file defines the core SNN architectures for the project.
 # 改善(snn_4_ann_parity_plan): ANN-SNN変換・比較実験のためのSpikingCNNモデルを追加。
 # 改善(v2): snn_4_ann_parity_plan Step 2.5 に基づき、Hybrid CNN-SNNモデルを追加。
+# 改善(v3): MultiLevelSpikeDrivenSelfAttentionのスパース化を、より洗練された微分可能なゲーティングに変更。
 
 import torch
 import torch.nn as nn
@@ -87,8 +88,13 @@ class MultiLevelSpikeDrivenSelfAttention(nn.Module):
         k_raw, _ = self.neuron_k(self.k_proj(x))
         v = self.v_proj(x)
 
-        q = torch.where(q_raw > self.sparsity_threshold, q_raw, torch.tensor(0.0, device=q_raw.device))
-        k = torch.where(k_raw > self.sparsity_threshold, k_raw, torch.tensor(0.0, device=k_raw.device))
+        # --- ▼ 修正 ▼ ---
+        # 微分可能なゲーティングに変更
+        q_gate = torch.sigmoid(q_raw - self.sparsity_threshold)
+        k_gate = torch.sigmoid(k_raw - self.sparsity_threshold)
+        q = q_raw * q_gate
+        k = k_raw * k_gate
+        # --- ▲ 修正 ▲ ---
 
         outputs = []
         for scale in self.time_scales:
