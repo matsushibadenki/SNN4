@@ -1,4 +1,4 @@
-# matsushibadenki/snn4/run_distillation.py
+# ファイルパス: run_distillation.py
 # Title: 知識蒸留実行スクリプト
 # Description: KnowledgeDistillationManagerを使用して、知識蒸留プロセスを開始します。
 #              設定ファイルとコマンドライン引数からパラメータを読み込みます。
@@ -7,17 +7,24 @@
 # 改善点(snn_4_ann_parity_plan):
 # - ANN教師モデルとして、AutoModelForCausalLMの代わりに具体的なANNBaselineModelを
 #   インスタンス化するように修正し、より管理された蒸留プロセスを実現。
+# 改善点(v2): torchvisionのモデルを教師として使用できるようにし、画像データセットに対応。
 
 import argparse
 import asyncio
+import torch
+import torchvision.models as models
+from torch.utils.data import DataLoader
+
 from app.containers import TrainingContainer
 from snn_research.distillation.knowledge_distillation_manager import KnowledgeDistillationManager
-from snn_research.benchmark.ann_baseline import ANNBaselineModel
+from snn_research.benchmark import TASK_REGISTRY
 
 async def main():
     parser = argparse.ArgumentParser(description="SNN Knowledge Distillation Runner")
     parser.add_argument("--config", type=str, default="configs/base_config.yaml", help="Base config file path")
-    parser.add_argument("--model_config", type=str, default="configs/models/small.yaml", help="Model architecture config file path")
+    parser.add_argument("--model_config", type=str, default="configs/cifar10_spikingcnn_config.yaml", help="SNN model architecture config file path")
+    parser.add_argument("--task", type=str, default="cifar10", help="The benchmark task to distill.")
+    parser.add_argument("--teacher_model", type=str, default="resnet18", help="The torchvision teacher model to use.")
     args = parser.parse_args()
 
     # DIコンテナのインスタンス化
@@ -25,69 +32,65 @@ async def main():
     container.config.from_yaml(args.config)
     container.config.from_yaml(args.model_config)
 
-    # --- ▼ 修正 ▼ ---
     # DIコンテナから必要なコンポーネントを正しい順序で取得・構築
     device = container.device()
-    student_model = container.snn_model().to(device)
+    # vocab_sizeは画像タスクではクラス数として使用
+    student_model = container.snn_model(vocab_size=10).to(device)
     optimizer = container.optimizer(params=student_model.parameters())
     scheduler = container.scheduler(optimizer=optimizer) if container.config.training.gradient_based.use_scheduler() else None
 
-    # --- ▼ snn_4_ann_parity_planに基づく修正 ▼ ---
-    # 教師モデルとしてANNBaselineModelを明示的に構築
-    print("🧠 Initializing ANN teacher model (ANNBaselineModel)...")
-    snn_config = container.config.model.to_dict()
-    teacher_model = ANNBaselineModel(
-        vocab_size=container.tokenizer.provided.vocab_size(),
-        d_model=snn_config.get('d_model', 128),
-        nhead=snn_config.get('n_head', 2),
-        d_hid=snn_config.get('d_model', 128) * 4, # 一般的なFFNの拡張率
-        nlayers=snn_config.get('num_layers', 4),
-        num_classes=container.tokenizer.provided.vocab_size()
-    ).to(device)
-    # 注: 実際の使用例では、ここで教師モデルの学習済み重みをロードします
-    # teacher_model.load_state_dict(torch.load("path/to/teacher.pth"))
-    # --- ▲ snn_4_ann_parity_planに基づく修正 ▲ ---
-
+    # --- 教師モデルの構築 ---
+    print(f"🧠 Initializing ANN teacher model ({args.teacher_model})...")
+    if args.teacher_model == "resnet18":
+        teacher_model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        # CIFAR-10用に最終層を変更
+        num_ftrs = teacher_model.fc.in_features
+        teacher_model.fc = torch.nn.Linear(num_ftrs, 10)
+    else:
+        raise ValueError(f"Unsupported teacher model: {args.teacher_model}")
+    teacher_model = teacher_model.to(device)
+    
     distillation_trainer = container.distillation_trainer(
         model=student_model,
         optimizer=optimizer,
         scheduler=scheduler,
-        device=device
+        device=device,
+        rank=-1
     )
     model_registry = container.model_registry()
 
     manager = KnowledgeDistillationManager(
         student_model=student_model,
-        # teacher_model_nameの代わりに、インスタンス化された教師モデルを渡すように変更
         teacher_model=teacher_model,
         trainer=distillation_trainer,
         tokenizer_name=container.config.data.tokenizer_name(),
         model_registry=model_registry,
         device=device
     )
-    # --- ▲ 修正 ▲ ---
 
-    # (仮) データセットの準備
-    # 実際には、ファイルからテキストデータをロードする
-    sample_texts = [
-        "Spiking Neural Networks are a promising alternative to traditional ANNs.",
-        "They operate based on discrete events, which can lead to greater energy efficiency.",
-        "Knowledge distillation is a technique to transfer knowledge from a large model to a smaller one."
-    ]
-    train_loader = manager.prepare_dataset(
-        sample_texts,
-        max_length=container.config.model.time_steps(),
+    # --- データセットの準備 ---
+    TaskClass = TASK_REGISTRY.get(args.task)
+    if not TaskClass:
+        raise ValueError(f"Task '{args.task}' not found.")
+    task = TaskClass(tokenizer=container.tokenizer.provided, device=device, hardware_profile={})
+    train_dataset, val_dataset = task.prepare_data()
+
+    # 知識蒸留用にデータセットをラップ
+    train_loader, val_loader = manager.prepare_dataset(
+        train_dataset, 
+        val_dataset,
+        collate_fn=task.get_collate_fn(),
         batch_size=container.config.training.batch_size()
     )
-    val_loader = train_loader # 簡単のため同じデータを使用
+
 
     # 蒸留の実行
     await manager.run_distillation(
         train_loader=train_loader,
         val_loader=val_loader,
-        epochs=3, # テスト用のエポック数
-        model_id="distilled_snn_expert_v1",
-        task_description="An expert SNN for explaining AI concepts, created via distillation.",
+        epochs=container.config.training.epochs(),
+        model_id=f"{args.task}_distilled_from_{args.teacher_model}",
+        task_description=f"An expert SNN for {args.task}, distilled from {args.teacher_model}.",
         student_config=container.config.model.to_dict()
     )
 
