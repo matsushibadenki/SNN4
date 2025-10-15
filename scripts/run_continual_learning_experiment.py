@@ -1,20 +1,11 @@
 # ファイルパス: scripts/run_continual_learning_experiment.py
-# (新規作成)
 # Title: 継続学習（Continual Learning）実験スクリプト
-# Description:
-# snn_4_ann_parity_plan.mdおよび関連ロードマップに基づき、
-# SNNの継続学習能力、特に「破局的忘却」の克服を実証するための実験を行う。
-# 1. タスクA（例: SST-2）でモデルを訓練し、EWCのためのFisher行列を計算する。
-# 2. その後、タスクB（例: MRPC）でモデルを追加訓練する。
-#    - パターン1: EWCを使用してタスクAの知識を保護する。
-#    - パターン2: EWCを使用しない（ファインチューニングのみ）。
-# 3. 両パターンのモデルが、元のタスクAの性能をどれだけ維持しているか評価・比較する。
-
+# Description: SNNの継続学習能力、特に「破局的忘却」の克服を実証するための実験を行う。
 import argparse
 import subprocess
 import sys
 from pathlib import Path
-import pandas as pd
+import pandas as pd  # type: ignore
 import time
 
 def run_command(command: list[str]):
@@ -46,7 +37,7 @@ def main():
     task_b_finetune_dir = output_path / "task_b_finetune"
 
     # --- Stage 1: Train on Task A (SST-2) and compute Fisher matrix ---
-    print("\n" + "="*20 + "  المرحلة 1: Train on Task A (SST-2) " + "="*20)
+    print("\n" + "="*20 + "  Stage 1: Train on Task A (SST-2) " + "="*20)
     train_cmd_a = [
         sys.executable, "train.py",
         "--model_config", args.model_config,
@@ -58,7 +49,7 @@ def main():
     run_command(train_cmd_a)
 
     # --- Stage 2: Train on Task B (MRPC) ---
-    print("\n" + "="*20 + " المرحلة 2: Train on Task B (MRPC) " + "="*20)
+    print("\n" + "="*20 + " Stage 2: Train on Task B (MRPC) " + "="*20)
     
     # --- 2a: With EWC ---
     print("\n--- 2a: Training on MRPC with EWC ---")
@@ -72,15 +63,9 @@ def main():
         "--override_config", "training.gradient_based.loss.ewc_weight=400",
         "--override_config", f"training.log_dir={task_b_ewc.as_posix()}"
     ]
-    # Note: We need a way to specify the new dataset. For now, we'll handle this in the eval step.
-    # The training call is more about updating the weights.
-    
-    # For a real scenario, you'd point to MRPC data.
-    # Here, we simulate by just training more. The benchmark script does the real eval.
-    # This part is simplified to just generate the models.
     
     print("...Simulating training for EWC model...")
-    # run_command(train_cmd_b_ewc) # This would require data path handling in train.py
+    # run_command(train_cmd_b_ewc)
 
     # --- 2b: Without EWC (Fine-tuning) ---
     print("\n--- 2b: Training on MRPC without EWC (Fine-tuning) ---")
@@ -97,11 +82,7 @@ def main():
     print("...Simulating training for fine-tune model...")
     # run_command(train_cmd_b_finetune)
     
-    # This script structure is complex to run end-to-end due to data switching.
-    # The key is demonstrating the *capability*. We will assume models are generated
-    # and proceed to a conceptual evaluation report.
-
-    print("\n" + "="*20 + " المرحلة 3: Evaluation " + "="*20)
+    print("\n" + "="*20 + " Stage 3: Evaluation " + "="*20)
     print("Assuming models have been trained, generating a conceptual report...")
 
     # --- Stage 3: Generate Conceptual Report ---
