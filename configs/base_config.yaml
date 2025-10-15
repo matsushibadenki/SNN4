@@ -19,11 +19,14 @@ training:
   epochs: 10
   batch_size: 8
   
-  # snn_4_ann_parity_planに基づく追加
   quantization:
     enabled: false
-    # backend: 'fbgemm' for x86, 'qnnpack' for ARM
     backend: 'fbgemm'
+    
+  # snn_4_ann_parity_planに基づく追加
+  pruning:
+    enabled: false
+    amount: 0.2 # 20%の重みをプルーニング
 
   meta_cognition:
     enabled: true
