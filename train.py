@@ -8,6 +8,7 @@
 # - 改善点 (snn_4_ann_parity_plan): 学習後の構造的プルーニング機能を追加。
 # - 修正(mypy): [arg-type]エラーを解消するため、castを使用して型を明示。
 # - 改善点(snn_4_ann_parity_plan): EWCデータのロード機能を追加。
+# - 修正(v2): QATの適用タイミングを学習開始前に修正。
 
 import argparse
 import os
@@ -104,18 +105,21 @@ def train(
         if is_distributed and paradigm != "gradient_based":
             raise NotImplementedError(f"{paradigm} learning does not support DDP yet.")
         
-        snn_model: nn.Module = container.snn_model().to(device)
+        snn_model: nn.Module = container.snn_model()
 
+        # --- ▼ QAT修正 ▼ ---
+        # QATは学習ループの前に適用する
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
-            from snn_research.training.quantization import apply_qat
-            snn_model.to('cpu')
+            if is_distributed:
+                print("⚠️ 警告: 量子化認識学習(QAT)と分散学習(DDP)の併用は実験的です。")
+            snn_model.to('cpu') # QATの準備はCPUで行う必要がある
             snn_model = apply_qat(snn_model)
-            snn_model.to(device)
-            print(" 量子化認識学習（QAT）が有効になりました。")
+            print("✅ 量子化認識学習（QAT）のためにモデルを準備しました。")
+        
+        snn_model.to(device)
+        # --- ▲ QAT修正 ▲ ---
 
         if is_distributed:
-            if config.get('training', {}).get('quantization', {}).get('enabled', False):
-                print("⚠️ 警告: 量子化認識学習(QAT)と分散学習(DDP)の併用は実験的です。")
             snn_model = DDP(snn_model, device_ids=[rank], find_unused_parameters=True)
         
         astrocyte = container.astrocyte_network(snn_model=snn_model) if args.use_astrocyte else None
@@ -127,23 +131,21 @@ def train(
             trainer_provider = container.distillation_trainer if is_distillation else container.standard_trainer
             trainer = trainer_provider(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
         elif paradigm == "self_supervised":
-            optimizer = container.ssl_optimizer(params=snn_model.parameters())
-            scheduler = container.ssl_scheduler(optimizer=optimizer) if config['training']['self_supervised']['use_scheduler'] else None
+            optimizer = container.optimizer(params=snn_model.parameters()) # Assuming same optimizer config
+            scheduler = container.scheduler(optimizer=optimizer) if config['training']['self_supervised']['use_scheduler'] else None
             trainer = container.self_supervised_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
         elif paradigm == "physics_informed":
             optimizer = container.pi_optimizer(params=snn_model.parameters())
             scheduler = container.pi_scheduler(optimizer=optimizer) if config['training']['physics_informed']['use_scheduler'] else None
             trainer = container.physics_informed_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
         else: # probabilistic_ensemble
-            optimizer = container.pe_optimizer(params=snn_model.parameters())
-            scheduler = container.pe_scheduler(optimizer=optimizer) if config['training']['probabilistic_ensemble']['use_scheduler'] else None
+            optimizer = container.optimizer(params=snn_model.parameters()) # Assuming same optimizer config
+            scheduler = container.scheduler(optimizer=optimizer) if config['training']['probabilistic_ensemble']['use_scheduler'] else None
             trainer = container.probabilistic_ensemble_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
 
-        # --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
         if args.load_ewc_data:
             if isinstance(trainer, BreakthroughTrainer):
                 trainer.load_ewc_data(args.load_ewc_data)
-        # --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
 
         start_epoch = trainer.load_checkpoint(args.resume_path) if args.resume_path else 0
         for epoch in range(start_epoch, config['training']['epochs']):
@@ -170,6 +172,8 @@ def train(
         final_model = cast(nn.Module, final_model_unwrapped)
         
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
+            # 学習済みのQATモデルを最終的な量子化モデルに変換
+            final_model.to('cpu')
             quantized_model = convert_to_quantized_model(final_model)
             quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
             torch.save(quantized_model.state_dict(), quantized_path)
@@ -177,6 +181,8 @@ def train(
         
         if config.get('training', {}).get('pruning', {}).get('enabled', False):
             pruning_amount = config['training']['pruning'].get('amount', 0.2)
+            # 量子化が有効な場合は、量子化されたモデルをプルーニングする（またはその逆）
+            # ここでは、元の浮動小数点モデルをプルーニング
             pruned_model = apply_magnitude_pruning(final_model, amount=pruning_amount)
             pruned_path = os.path.join(config['training']['log_dir'], 'pruned_best_model.pth')
             torch.save(pruned_model.state_dict(), pruned_path)
@@ -192,8 +198,8 @@ def collate_fn(tokenizer, is_distillation: bool) -> Callable[[List[Tuple[torch.T
         inputs = [item[0] for item in batch]
         targets = [item[1] for item in batch]
         
-        padded_inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=float(padding_val))
-        padded_targets = torch.nn.utils.rnn.pad_sequence(targets, batch_first=True, padding_value=float(padding_val))
+        padded_inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=float(padding_val if padding_val is not None else 0))
+        padded_targets = torch.nn.utils.rnn.pad_sequence(targets, batch_first=True, padding_value=float(padding_val if padding_val is not None else 0))
 
         if is_distillation:
             logits = [item[2] for item in batch]
@@ -223,13 +229,19 @@ def main():
     
     if args.override_config:
         for override in args.override_config:
-            keys, value = override.split('=', 1)
-            try: value = int(value)
+            keys, value_str = override.split('=', 1)
+            try:
+                value = int(value_str)
             except ValueError:
-                try: value = float(value)
+                try:
+                    value = float(value_str)
                 except ValueError:
-                    if value.lower() in ['true', 'false']:
-                        value = value.lower() == 'true'
+                    if value_str.lower() == 'true':
+                        value = True
+                    elif value_str.lower() == 'false':
+                        value = False
+                    else:
+                        value = value_str
             
             config_dict = {}
             temp_dict = config_dict
