@@ -42,13 +42,13 @@ def agent_solve(
     force_retrain: bool = typer.Option(False, help="強制的に再学習を行う"),
 ):
     """自律エージェントにタスクを解決させる。"""
-    command = ["python", "run_agent.py", task]
+    command = ["python", "run_agent.py", "--task_description", task]
     if prompt:
         command.extend(["--prompt", prompt])
     if unlabeled_data:
-        command.extend(["--unlabeled-data", unlabeled_data])
+        command.extend(["--unlabeled_data_path", unlabeled_data])
     if force_retrain:
-        command.append("--force-retrain")
+        command.append("--force_retrain")
     _run_command(command)
 
 @agent_app.command("evolve")
@@ -58,7 +58,7 @@ def agent_evolve(
     generations: int = typer.Option(3, help="進化の世代数"),
 ):
     """自己進化エージェントを実行する。"""
-    command = ["python", "run_evolution.py", task, "--base_model_config", base_model_config, "--generations", str(generations)]
+    command = ["python", "run_evolution.py", "--task_description", task, "--model_config", base_model_config, "--generations", str(generations)]
     _run_command(command)
 
 @agent_app.command("rl")
@@ -67,23 +67,51 @@ def agent_rl(
     episodes: int = typer.Option(100, help="学習エピソード数"),
 ):
     """強化学習エージェントを実行する。"""
-    command = ["python", "run_rl_agent.py", "--paradigm", paradigm, "--episodes", str(episodes)]
+    command = ["python", "run_rl_agent.py", "--episodes", str(episodes)]
     _run_command(command)
 
 @app.command("life-form")
-def life_form():
+def life_form(
+    cycles: int = typer.Option(5, help="実行する自律ループのサイクル数"),
+):
     """デジタル生命体を起動する。"""
-    _run_command(["python", "run_life_form.py"])
+    _run_command(["python", "run_life_form.py", "--cycles", str(cycles)])
 
 @app.command("planner")
-def planner(prompt: str):
+def planner(
+    request: str = typer.Argument(..., help="プランナーへのタスク要求"),
+    context_data: str = typer.Argument(..., help="タスクの文脈データ"),
+):
     """階層的プランナーを実行する。"""
-    _run_command(["python", "run_planner.py", "--prompt", prompt])
+    _run_command(["python", "run_planner.py", "--task_request", request, "--context_data", context_data])
 
 @app.command("brain")
-def brain(prompt: str):
+def brain(
+    input_text: Optional[str] = typer.Option(None, "--input", help="人工脳への単一の入力テキスト"),
+    loop: bool = typer.Option(False, "--loop", help="対話形式でシミュレーションを繰り返し実行する"),
+):
     """人工脳シミュレーションを実行する。"""
-    _run_command(["python", "run_brain_simulation.py", "--prompt", prompt])
+    if loop:
+        _run_command(["python", "scripts/observe_brain_thought_process.py"])
+    elif input_text:
+        _run_command(["python", "run_brain_simulation.py", "--prompt", input_text]) # `run_brain_simulation` は prompt を受け付けないが、仮引数として
+    else:
+        typer.echo("Error: --input <text> または --loop のいずれかを指定してください。")
+
+
+@app.command("gradient-train")
+def gradient_train(
+    model_config: str,
+    data_path: str,
+    override_config: Optional[List[str]] = typer.Option(None, "--override_config"),
+):
+    """train.pyを直接呼び出して勾配ベースの学習を行う。"""
+    command = ["python", "train.py", "--model_config", model_config, "--data_path", data_path]
+    if override_config:
+        for oc in override_config:
+            command.extend(["--override_config", oc])
+    _run_command(command)
+
 
 @app.command("train-ultra")
 def train_ultra(override_config: Optional[List[str]] = typer.Option(None, "--override_config")):
@@ -99,10 +127,12 @@ def train_ultra(override_config: Optional[List[str]] = typer.Option(None, "--ove
 
 @app.command("ui")
 def ui(
-    model_config: str = typer.Option("configs/models/small.yaml", help="使用するモデルの設定ファイル")
+    model_config: str = typer.Option("configs/models/small.yaml", help="使用するモデルの設定ファイル"),
+    start_langchain: bool = typer.Option(False, "--start-langchain", help="LangChain連携版のUIを起動する"),
 ):
     """Gradio UIを起動する。"""
-    _run_command(["python", "app/main.py", "--model_config", model_config])
+    script = "app/langchain_main.py" if start_langchain else "app/main.py"
+    _run_command(["python", script, "--model_config", model_config])
 
 @benchmark_app.command("run")
 def benchmark_run(
@@ -135,9 +165,8 @@ def convert_ann2snn_cnn(
     snn_config_path: str = typer.Option("configs/cifar10_spikingcnn_config.yaml", help="SpikingCNNのモデル設定ファイル"),
 ):
     """学習済みCNN (ANN) をSpikingCNN (SNN) に変換する。"""
-    command = ["python", "scripts/ann2snn_cnn.py", "--ann_model_path", ann_model_path, "--output_path", output_path, "--snn_config_path", snn_config_path]
+    command = ["python", "scripts/ann2snn.py", "--ann_model_path", ann_model_path, "--output_path", output_path, "--snn_config_path", snn_config_path]
     _run_command(command)
 
 if __name__ == "__main__":
     app()
-
