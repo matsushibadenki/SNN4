@@ -5,6 +5,7 @@
 # 改善(snn_4_ann_parity_plan): ANN-SNN変換・比較実験のためのSpikingCNNモデルを追加。
 # 改善(v2): snn_4_ann_parity_plan Step 2.5 に基づき、Hybrid CNN-SNNモデルを追加。
 # 改善(v3): MultiLevelSpikeDrivenSelfAttentionのスパース化を、より洗練された微分可能なゲーティングに変更。
+# 改善(v4): snnTorchバックエンドに対応するためのファクトリ機能を強化。
 
 import torch
 import torch.nn as nn
@@ -19,9 +20,9 @@ from .base import BaseModel, SNNLayerNorm
 from .neurons import AdaptiveLIFNeuron, IzhikevichNeuron
 from .mamba_core import SpikingMamba
 from .hrm_core import SpikingHRM
+from . import sntorch_models
 
-# --- レイヤーとモジュール ---
-
+# --- (省略: PredictiveCodingLayer, MultiLevelSpikeDrivenSelfAttention, STAttenBlock, etc. は変更なし) ---
 class PredictiveCodingLayer(nn.Module):
     error_mean: torch.Tensor
     error_std: torch.Tensor
@@ -88,13 +89,11 @@ class MultiLevelSpikeDrivenSelfAttention(nn.Module):
         k_raw, _ = self.neuron_k(self.k_proj(x))
         v = self.v_proj(x)
 
-        # --- ▼ 修正 ▼ ---
         # 微分可能なゲーティングに変更
         q_gate = torch.sigmoid(q_raw - self.sparsity_threshold)
         k_gate = torch.sigmoid(k_raw - self.sparsity_threshold)
         q = q_raw * q_gate
         k = k_raw * k_gate
-        # --- ▲ 修正 ▲ ---
 
         outputs = []
         for scale in self.time_scales:
@@ -406,7 +405,7 @@ class SpikingCNN(BaseModel):
 
 
 class SNNCore(nn.Module):
-    def __init__(self, config: DictConfig, vocab_size: int):
+    def __init__(self, config: DictConfig, vocab_size: int, backend: str = "spikingjelly"):
         super(SNNCore, self).__init__()
         if isinstance(config, dict):
             config = OmegaConf.create(config)
@@ -418,19 +417,26 @@ class SNNCore(nn.Module):
         params.pop('path', None)
         neuron_config = params.pop('neuron', {})
 
-        model_map = {
-            "predictive_coding": BreakthroughSNN,
-            "spiking_transformer": SpikingTransformer,
-            "spiking_mamba": SpikingMamba,
-            "spiking_hrm": SpikingHRM,
-            "simple": SimpleSNN,
-            "hybrid_cnn_snn": HybridCnnSnnModel,
-            "spiking_cnn": SpikingCNN,
-        }
+        if backend == "spikingjelly":
+            model_map = {
+                "predictive_coding": BreakthroughSNN,
+                "spiking_transformer": SpikingTransformer,
+                "spiking_mamba": SpikingMamba,
+                "spiking_hrm": SpikingHRM,
+                "simple": SimpleSNN,
+                "hybrid_cnn_snn": HybridCnnSnnModel,
+                "spiking_cnn": SpikingCNN,
+            }
+        elif backend == "snntorch":
+            model_map = {
+                "spiking_transformer": sntorch_models.SpikingTransformerSnnTorch,
+            }
+        else:
+            raise ValueError(f"Unsupported backend: {backend}")
+
         if model_type not in model_map:
-            raise ValueError(f"Unknown model type: {model_type}")
+            raise ValueError(f"Unknown model type '{model_type}' for backend '{backend}'")
         
-        # Pass all params to the model constructor
         self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
 
 
