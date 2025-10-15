@@ -2,21 +2,10 @@
 # ベンチマークタスクの定義ファイル
 #
 # (省略)
-# - ValueError修正: SNNClassifier.forwardの戻り値を3つのタプル(logits, spikes, mem)に修正し、
-#                   Trainerが期待するインターフェースと一致させた。
-# 改善点:
-# - ROADMAPフェーズ4「ハードウェア展開」に基づき、ハードウェアプロファイルを導入。
-# - evaluateメソッドを更新し、スパイク数から推定エネルギー消費量を計算するようにした。
-#
-# 修正点(v2):
-# - RuntimeErrorを解消するため、SNNClassifierが使用するBreakthroughSNNの
-#   d_stateパラメータを調整し、次元の不整合を修正。
-#
-# 修正点(v3):
-# - 循環参照エラーを解消するため、TASK_REGISTRYの定義を __init__.py に移動。
-#
-# 修正点(v4):
 # - mypyエラー[arg-type]を解消するため、SNNCoreに渡す設定をDictConfigに変換。
+# 改善(snn_4_ann_parity_plan):
+# - CIFAR-10データセットを扱うCIFAR10Taskを新たに追加。
+# - HybridCnnSnnModelの構築と評価ロジックを実装。
 
 import os
 import json
@@ -28,7 +17,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedTokenizerBase
-from omegaconf import OmegaConf # ◾️ 追加
+from omegaconf import OmegaConf
+
+# snn_4_ann_parity_planに基づく追加
+from torchvision import datasets, transforms # type: ignore
 
 from snn_research.core.snn_core import BreakthroughSNN, SNNCore
 from snn_research.benchmark.ann_baseline import ANNBaselineModel
@@ -182,3 +174,94 @@ class SST2Task(BenchmarkTask):
             "avg_spikes": avg_spikes,
             "estimated_energy_j": energy_j,
         }
+
+# --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
+class CIFAR10Task(BenchmarkTask):
+    """CIFAR-10画像分類タスク。"""
+
+    def prepare_data(self, data_dir: str = "data") -> Tuple[Dataset, Dataset]:
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+        train_dataset = datasets.CIFAR10(root=data_dir, train=True, download=True, transform=transform)
+        val_dataset = datasets.CIFAR10(root=data_dir, train=False, download=True, transform=transform)
+        return train_dataset, val_dataset
+
+    def get_collate_fn(self) -> Callable:
+        def collate_fn(batch: List[Tuple[torch.Tensor, int]]):
+            images = torch.stack([item[0] for item in batch])
+            targets = torch.tensor([item[1] for item in batch], dtype=torch.long)
+            return {"input_images": images, "labels": targets}
+        return collate_fn
+
+    def build_model(self, model_type: str, vocab_size: int) -> nn.Module:
+        # CIFAR-10のクラス数は10
+        num_classes = 10
+        
+        if model_type == 'SNN':
+            hybrid_config = {
+                "architecture_type": "hybrid_cnn_snn",
+                "time_steps": 16,
+                "ann_frontend": {
+                    "name": "mobilenet_v2",
+                    "pretrained": True,
+                    "output_features": 1280
+                },
+                "snn_backend": {
+                    "d_model": 1280,
+                    "n_head": 8,
+                    "num_layers": 4
+                },
+                "neuron": {"type": "lif"}
+            }
+            # SNNCoreはvocab_sizeを期待するが、このモデルでは出力クラス数として使用
+            return SNNCore(config=OmegaConf.create({"model": hybrid_config}), vocab_size=num_classes)
+        else: # ANN
+            # 比較用のANNとして事前学習済みMobileNetV2を使用
+            model = models.mobilenet_v2(pretrained=True)
+            model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+            return model
+
+    def evaluate(self, model: nn.Module, loader: DataLoader) -> Dict[str, Any]:
+        model.eval()
+        true_labels: List[int] = []
+        pred_labels: List[int] = []
+        total_spikes = 0
+        num_neurons = sum(p.numel() for p in model.parameters())
+
+        with torch.no_grad():
+            for batch in tqdm(loader, desc="Evaluating CIFAR-10"):
+                inputs = {k: v.to(self.device) for k, v in batch.items()}
+                targets = inputs.pop("labels")
+                
+                # SNNとANNで入力キーが異なるため分岐
+                if isinstance(model, SNNCore):
+                    outputs, spikes, _ = model(inputs["input_images"])
+                else: # ANN
+                    outputs = model(inputs["input_images"])
+                    spikes = None # ANNにはスパイクがない
+
+                if spikes is not None:
+                    total_spikes += spikes.sum().item()
+                
+                preds = torch.argmax(outputs, dim=1)
+                pred_labels.extend(preds.cpu().numpy())
+                true_labels.extend(targets.cpu().numpy())
+
+        dataset_size = len(cast(Sized, loader.dataset))
+        avg_spikes = total_spikes / dataset_size if total_spikes > 0 else 0.0
+        
+        energy_j = calculate_energy_consumption(
+            avg_spikes_per_sample=avg_spikes,
+            num_neurons=num_neurons,
+            energy_per_synop=self.hardware_profile.get("energy_per_synop", 0.0)
+        )
+
+        return {
+            "accuracy": calculate_accuracy(true_labels, pred_labels),
+            "avg_spikes": avg_spikes,
+            "estimated_energy_j": energy_j,
+        }
+# --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
