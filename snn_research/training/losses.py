@@ -2,10 +2,12 @@
 # (更新)
 # 改善点: 学習初期段階での妨げとなる可能性があるmem_reg_lossを無効化。
 # 改善点(v2): 継続学習のためのElastic Weight Consolidation (EWC) 損失を追加。
-# 改善点(v3): スパース性を促す正則化項(sparsity_reg_weight)を追加し、汎化性能を向上。
+# 改善点(v3): スパース性を促す正則化項(sparsity_reg_weight)を追加し,汎化性能を向上。
 # 改善点(snn_4_ann_parity_plan):
 # - temporal/latency codingの導入として、時間的圧縮を促す正則化項
 #   (temporal_compression_weight)を追加。
+# - Spiking Transformerの自己注意メカニズムのスパース性を適応的に学習させるための
+#   正則化項(sparsity_threshold_reg_weight)を追加。
 
 import torch
 import torch.nn as nn
@@ -13,9 +15,11 @@ import torch.nn.functional as F
 from typing import Dict, Optional
 from transformers import PreTrainedTokenizerBase
 
+from snn_research.core.snn_core import MultiLevelSpikeDrivenSelfAttention
+
 class CombinedLoss(nn.Module):
     """クロスエントロピー損失、各種正則化、EWC損失を組み合わせた損失関数。"""
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 1.0, spike_reg_weight: float = 0.0, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.0, temporal_compression_weight: float = 0.0, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 1.0, spike_reg_weight: float = 0.0, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.0, temporal_compression_weight: float = 0.0, sparsity_threshold_reg_weight: float = 0.0, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
         super().__init__()
         pad_id = tokenizer.pad_token_id
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
@@ -25,6 +29,7 @@ class CombinedLoss(nn.Module):
             'mem_reg': mem_reg_weight, 
             'sparsity_reg': sparsity_reg_weight,
             'temporal_compression': temporal_compression_weight,
+            'sparsity_threshold_reg': sparsity_threshold_reg_weight,
             'ewc': ewc_weight
         }
         self.target_spike_rate = target_spike_rate
@@ -38,22 +43,31 @@ class CombinedLoss(nn.Module):
         spike_rate = spikes.mean()
         spike_reg_loss = F.mse_loss(spike_rate, torch.tensor(self.target_spike_rate, device=spike_rate.device))
         
-        # L1正則化によるスパース損失
         sparsity_loss = torch.mean(torch.abs(spikes))
 
         mem_reg_loss = torch.mean(mem**2)
         
-        # 時間的圧縮損失: 時間の経過とともにスパイクにペナルティ
         temporal_compression_loss = torch.tensor(0.0, device=spikes.device)
         if self.weights['temporal_compression'] > 0 and spikes.ndim > 1 and spikes.shape[1] > 1:
             time_steps = spikes.shape[1]
             time_weights = torch.linspace(0, 1, time_steps, device=spikes.device).view(1, -1, 1)
-            # スパイクテンソルの次元に合わせて拡張
             if spikes.ndim > 3:
                 time_weights = time_weights.view(1, time_steps, 1, 1)
             temporal_compression_loss = (spikes * time_weights).mean()
 
-        # EWC損失の計算
+        # スパース性閾値の正則化
+        sparsity_threshold_reg_loss = torch.tensor(0.0, device=logits.device)
+        if self.weights['sparsity_threshold_reg'] > 0:
+            threshold_sum = torch.tensor(0.0, device=logits.device)
+            count = 0
+            for module in model.modules():
+                if isinstance(module, MultiLevelSpikeDrivenSelfAttention):
+                    threshold_sum += module.sparsity_threshold
+                    count += 1
+            if count > 0:
+                # 閾値が大きくなることを奨励（損失を減らすため負の項にする）
+                sparsity_threshold_reg_loss = - (threshold_sum / count)
+
         ewc_loss = torch.tensor(0.0, device=logits.device)
         if self.weights['ewc'] > 0 and self.fisher_matrix:
             for name, param in model.named_parameters():
@@ -67,6 +81,7 @@ class CombinedLoss(nn.Module):
                       self.weights['sparsity_reg'] * sparsity_loss +
                       self.weights['mem_reg'] * mem_reg_loss +
                       self.weights['temporal_compression'] * temporal_compression_loss +
+                      self.weights['sparsity_threshold_reg'] * sparsity_threshold_reg_loss +
                       self.weights['ewc'] * ewc_loss)
         
         return {
@@ -74,22 +89,24 @@ class CombinedLoss(nn.Module):
             'spike_reg_loss': spike_reg_loss, 'sparsity_loss': sparsity_loss,
             'mem_reg_loss': mem_reg_loss, 'spike_rate': spike_rate,
             'temporal_compression_loss': temporal_compression_loss,
+            'sparsity_threshold_reg_loss': sparsity_threshold_reg_loss,
             'ewc_loss': ewc_loss
         }
 
-# (以降のDistillationLossなどのクラスは変更なし)
 class DistillationLoss(nn.Module):
     """知識蒸留のための損失関数（各種正則化付き）。"""
     def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 0.3, distill_weight: float = 0.7,
                  spike_reg_weight: float = 0.01, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.00001, 
-                 temporal_compression_weight: float = 0.0, temperature: float = 2.0, target_spike_rate: float = 0.02, **kwargs):
+                 temporal_compression_weight: float = 0.0, sparsity_threshold_reg_weight: float = 0.0, 
+                 temperature: float = 2.0, target_spike_rate: float = 0.02, **kwargs):
         super().__init__()
         student_pad_id = tokenizer.pad_token_id
         self.temperature = temperature
         self.weights = {
             'ce': ce_weight, 'distill': distill_weight, 'spike_reg': spike_reg_weight, 
             'mem_reg': mem_reg_weight, 'sparsity_reg': sparsity_reg_weight,
-            'temporal_compression': temporal_compression_weight
+            'temporal_compression': temporal_compression_weight,
+            'sparsity_threshold_reg': sparsity_threshold_reg_weight
         }
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=student_pad_id if student_pad_id is not None else -100)
         self.distill_loss_fn = nn.KLDivLoss(reduction='none', log_target=True)
@@ -139,18 +156,31 @@ class DistillationLoss(nn.Module):
                 time_weights = time_weights.view(1, time_steps, 1, 1)
             temporal_compression_loss = (spikes * time_weights).mean()
 
+        sparsity_threshold_reg_loss = torch.tensor(0.0, device=student_logits.device)
+        if self.weights['sparsity_threshold_reg'] > 0:
+            threshold_sum = torch.tensor(0.0, device=student_logits.device)
+            count = 0
+            for module in model.modules():
+                if isinstance(module, MultiLevelSpikeDrivenSelfAttention):
+                    threshold_sum += module.sparsity_threshold
+                    count += 1
+            if count > 0:
+                sparsity_threshold_reg_loss = - (threshold_sum / count)
+
         total_loss = (self.weights['ce'] * ce_loss +
                       self.weights['distill'] * distill_loss +
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['sparsity_reg'] * sparsity_loss +
                       self.weights['mem_reg'] * mem_reg_loss +
-                      self.weights['temporal_compression'] * temporal_compression_loss)
+                      self.weights['temporal_compression'] * temporal_compression_loss +
+                      self.weights['sparsity_threshold_reg'] * sparsity_threshold_reg_loss)
 
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'distill_loss': distill_loss, 'spike_reg_loss': spike_reg_loss,
             'sparsity_loss': sparsity_loss, 'mem_reg_loss': mem_reg_loss,
-            'temporal_compression_loss': temporal_compression_loss
+            'temporal_compression_loss': temporal_compression_loss,
+            'sparsity_threshold_reg_loss': sparsity_threshold_reg_loss
         }
         
 class SelfSupervisedLoss(nn.Module):
