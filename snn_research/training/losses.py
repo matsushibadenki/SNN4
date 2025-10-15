@@ -1,9 +1,11 @@
 # ファイルパス: snn_research/training/losses.py
-# SNN学習で使用する損失関数
-# 
+# (更新)
 # 改善点: 学習初期段階での妨げとなる可能性があるmem_reg_lossを無効化。
 # 改善点(v2): 継続学習のためのElastic Weight Consolidation (EWC) 損失を追加。
 # 改善点(v3): スパース性を促す正則化項(sparsity_reg_weight)を追加し、汎化性能を向上。
+# 改善点(snn_4_ann_parity_plan):
+# - temporal/latency codingの導入として、時間的圧縮を促す正則化項
+#   (temporal_compression_weight)を追加。
 
 import torch
 import torch.nn as nn
@@ -13,11 +15,18 @@ from transformers import PreTrainedTokenizerBase
 
 class CombinedLoss(nn.Module):
     """クロスエントロピー損失、各種正則化、EWC損失を組み合わせた損失関数。"""
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 1.0, spike_reg_weight: float = 0.0, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.0, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 1.0, spike_reg_weight: float = 0.0, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.0, temporal_compression_weight: float = 0.0, target_spike_rate: float = 0.02, ewc_weight: float = 0.0, **kwargs):
         super().__init__()
         pad_id = tokenizer.pad_token_id
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
-        self.weights = {'ce': ce_weight, 'spike_reg': spike_reg_weight, 'mem_reg': mem_reg_weight, 'sparsity_reg': sparsity_reg_weight, 'ewc': ewc_weight}
+        self.weights = {
+            'ce': ce_weight, 
+            'spike_reg': spike_reg_weight, 
+            'mem_reg': mem_reg_weight, 
+            'sparsity_reg': sparsity_reg_weight,
+            'temporal_compression': temporal_compression_weight,
+            'ewc': ewc_weight
+        }
         self.target_spike_rate = target_spike_rate
         # EWCのためのFisher情報行列と最適パラメータを保持
         self.fisher_matrix: Dict[str, torch.Tensor] = {}
@@ -34,6 +43,16 @@ class CombinedLoss(nn.Module):
 
         mem_reg_loss = torch.mean(mem**2)
         
+        # 時間的圧縮損失: 時間の経過とともにスパイクにペナルティ
+        temporal_compression_loss = torch.tensor(0.0, device=spikes.device)
+        if self.weights['temporal_compression'] > 0 and spikes.ndim > 1 and spikes.shape[1] > 1:
+            time_steps = spikes.shape[1]
+            time_weights = torch.linspace(0, 1, time_steps, device=spikes.device).view(1, -1, 1)
+            # スパイクテンソルの次元に合わせて拡張
+            if spikes.ndim > 3:
+                time_weights = time_weights.view(1, time_steps, 1, 1)
+            temporal_compression_loss = (spikes * time_weights).mean()
+
         # EWC損失の計算
         ewc_loss = torch.tensor(0.0, device=logits.device)
         if self.weights['ewc'] > 0 and self.fisher_matrix:
@@ -47,12 +66,14 @@ class CombinedLoss(nn.Module):
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['sparsity_reg'] * sparsity_loss +
                       self.weights['mem_reg'] * mem_reg_loss +
+                      self.weights['temporal_compression'] * temporal_compression_loss +
                       self.weights['ewc'] * ewc_loss)
         
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'spike_reg_loss': spike_reg_loss, 'sparsity_loss': sparsity_loss,
             'mem_reg_loss': mem_reg_loss, 'spike_rate': spike_rate,
+            'temporal_compression_loss': temporal_compression_loss,
             'ewc_loss': ewc_loss
         }
 
@@ -60,11 +81,16 @@ class CombinedLoss(nn.Module):
 class DistillationLoss(nn.Module):
     """知識蒸留のための損失関数（各種正則化付き）。"""
     def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 0.3, distill_weight: float = 0.7,
-                 spike_reg_weight: float = 0.01, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.00001, temperature: float = 2.0, target_spike_rate: float = 0.02, **kwargs):
+                 spike_reg_weight: float = 0.01, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.00001, 
+                 temporal_compression_weight: float = 0.0, temperature: float = 2.0, target_spike_rate: float = 0.02, **kwargs):
         super().__init__()
         student_pad_id = tokenizer.pad_token_id
         self.temperature = temperature
-        self.weights = {'ce': ce_weight, 'distill': distill_weight, 'spike_reg': spike_reg_weight, 'mem_reg': mem_reg_weight, 'sparsity_reg': sparsity_reg_weight}
+        self.weights = {
+            'ce': ce_weight, 'distill': distill_weight, 'spike_reg': spike_reg_weight, 
+            'mem_reg': mem_reg_weight, 'sparsity_reg': sparsity_reg_weight,
+            'temporal_compression': temporal_compression_weight
+        }
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=student_pad_id if student_pad_id is not None else -100)
         self.distill_loss_fn = nn.KLDivLoss(reduction='none', log_target=True)
         self.target_spike_rate = target_spike_rate
@@ -104,17 +130,27 @@ class DistillationLoss(nn.Module):
         sparsity_loss = torch.mean(torch.abs(spikes))
         
         mem_reg_loss = torch.mean(mem**2)
+        
+        temporal_compression_loss = torch.tensor(0.0, device=spikes.device)
+        if self.weights['temporal_compression'] > 0 and spikes.ndim > 1 and spikes.shape[1] > 1:
+            time_steps = spikes.shape[1]
+            time_weights = torch.linspace(0, 1, time_steps, device=spikes.device).view(1, -1, 1)
+            if spikes.ndim > 3:
+                time_weights = time_weights.view(1, time_steps, 1, 1)
+            temporal_compression_loss = (spikes * time_weights).mean()
 
         total_loss = (self.weights['ce'] * ce_loss +
                       self.weights['distill'] * distill_loss +
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['sparsity_reg'] * sparsity_loss +
-                      self.weights['mem_reg'] * mem_reg_loss)
+                      self.weights['mem_reg'] * mem_reg_loss +
+                      self.weights['temporal_compression'] * temporal_compression_loss)
 
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'distill_loss': distill_loss, 'spike_reg_loss': spike_reg_loss,
-            'sparsity_loss': sparsity_loss, 'mem_reg_loss': mem_reg_loss
+            'sparsity_loss': sparsity_loss, 'mem_reg_loss': mem_reg_loss,
+            'temporal_compression_loss': temporal_compression_loss
         }
         
 class SelfSupervisedLoss(nn.Module):
