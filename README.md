@@ -23,55 +23,55 @@
 
 ```mermaid
 graph TD  
-    subgraph "User Interface"  
-        CLI\["snn-cli.py\<br/\>統合CLIツール"\]  
+    subgraph UI["User Interface"]  
+        CLI["snn-cli.py 統合CLIツール"]  
     end
 
-    subgraph "Orchestration Layer\<br/\>エージェント層"  
-        LifeForm\["DigitalLifeForm\<br/\>デジタル生命体"\]  
-        Autonomous\["AutonomousAgent\<br/\>タスク実行・Web学習"\]  
-        Evolving\["SelfEvolvingAgent\<br/\>自己進化"\]  
-        RL\["ReinforcementLearnerAgent\<br/\>強化学習"\]  
+    subgraph OL["Orchestration Layer エージェント層"]  
+        LifeForm["DigitalLifeForm デジタル生命体"]  
+        Autonomous["AutonomousAgent タスク実行・Web学習"]  
+        Evolving["SelfEvolvingAgent 自己進化"]  
+        RL["ReinforcementLearnerAgent 強化学習"]  
     end
 
-    subgraph "Cognitive Layer\<br/\>高次認知層"  
-        Planner\["HierarchicalPlanner\<br/\>階層プランナー"\]  
-        Brain\["ArtificialBrain\<br/\>人工脳シミュレータ"\]  
-        Memory\["Memory & RAG\<br/\>長期記憶・知識検索"\]  
+    subgraph CL["Cognitive Layer 高次認知層"]  
+        Planner["HierarchicalPlanner 階層プランナー"]  
+        Brain["ArtificialBrain 人工脳シミュレータ"]  
+        Memory["Memory and RAG 長期記憶・知識検索"]  
     end
 
-    subgraph "Execution Layer\<br/\>実行層"  
-        Training\["train.py\<br/\>学習パイプライン"\]  
-        Inference\["SNNInferenceEngine\<br/\>推論エンジン"\]  
-        Benchmark\["Benchmark Suite\<br/\>性能評価スイート"\]  
+    subgraph EL["Execution Layer 実行層"]  
+        Training["train.py 学習パイプライン"]  
+        Inference["SNNInferenceEngine 推論エンジン"]  
+        Benchmark["Benchmark Suite 性能評価スイート"]  
     end
 
-    subgraph "Foundation Layer\<br/\>基盤層"  
-        Core\["SNN\_Core\<br/\>Transformer, Mamba, Hybrid等"\]  
-        Rules\["BioLearningRules\<br/\>STDP, 因果追跡"\]  
+    subgraph FL["Foundation Layer 基盤層"]  
+        Core["SNN_Core Transformer, Mamba, Hybrid等"]  
+        Rules["BioLearningRules STDP, 因果追跡"]  
     end
 
-    CLI \--\>|"solve"| Autonomous  
-    CLI \--\>|"evolve"| Evolving  
-    CLI \--\>|"rl"| RL  
-    CLI \--\>|"life-form"| LifeForm  
-    CLI \--\>|"planner"| Planner  
-    CLI \--\>|"brain"| Brain  
-    CLI \--\>|"gradient-train"| Training  
-    CLI \--\>|"benchmark"| Benchmark
+    CLI -->|"solve"| Autonomous  
+    CLI -->|"evolve"| Evolving  
+    CLI -->|"rl"| RL  
+    CLI -->|"life-form"| LifeForm  
+    CLI -->|"planner"| Planner  
+    CLI -->|"brain"| Brain  
+    CLI -->|"gradient-train"| Training  
+    CLI -->|"benchmark"| Benchmark
 
-    LifeForm \--\>|"指示"| Autonomous  
-    LifeForm \--\>|"指示"| Evolving  
-    LifeForm \--\>|"指示"| RL
+    LifeForm -->|"指示"| Autonomous  
+    LifeForm -->|"指示"| Evolving  
+    LifeForm -->|"指示"| RL
 
-    Autonomous \--\>|"計画を要求"| Planner  
-    Autonomous \--\>|"学習/推論を実行"| Training  
-    Autonomous \--\>|"学習/推論を実行"| Inference
+    Autonomous -->|"計画を要求"| Planner  
+    Autonomous -->|"学習/推論を実行"| Training  
+    Autonomous -->|"学習/推論を実行"| Inference
 
-    Planner \--\>|"記憶を検索"| Memory  
-    Training \--\>|"モデルを構築"| Core  
-    Inference \--\>|"モデルを利用"| Core  
-    Training \--\>|"学習則を利用"| Rules
+    Planner -->|"記憶を検索"| Memory  
+    Training -->|"モデルを構築"| Core  
+    Inference -->|"モデルを利用"| Core  
+    Training -->|"学習則を利用"| Rules
 ```
 
 ## **4\. システムの実行方法**
