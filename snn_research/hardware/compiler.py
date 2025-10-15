@@ -7,6 +7,7 @@
 # - mypyエラーを解消するため、typing.castを使用してモジュールの型を明示的に指定。
 # - ROADMAPフェーズ6に基づき、simulate_on_hardwareメソッドを実装。
 # - 改善点(v3): 学習則のパラメータもコンパイルしてハードウェア構成に含める機能を追加。
+# - 改善点(snn_4_ann_parity_plan): 学習則のシリアライズをより堅牢な方法に変更。
 
 from typing import Dict, Any, List, cast
 import yaml
@@ -44,7 +45,7 @@ class NeuromorphicCompiler:
             "target_hardware": self.hardware_profile['name'],
             "neuron_cores": [],
             "synaptic_connectivity": [],
-            "learning_rule_config": {} # --- ◾️◾️◾️◾️◾️↓追加↓◾️◾️◾️◾️◾️ ---
+            "learning_rule_config": {}
         }
 
         # 1. ニューロンのマッピング (Neuron Core Mapping)
@@ -93,17 +94,26 @@ class NeuromorphicCompiler:
         
         print(f"  - {len(model.weights)}個のシナプス接続をマッピングしました。")
 
-        # --- ◾️◾️◾️◾️◾️↓追加↓◾️◾️◾️◾️◾️ ---
         # 3. 学習則のマッピング (Learning Rule Mapping)
         if hasattr(model, 'learning_rule') and isinstance(model.learning_rule, BioLearningRule):
-            rule_name = type(model.learning_rule).__name__
-            rule_params = {k: v for k, v in model.learning_rule.__dict__.items() if not k.startswith('_') and isinstance(v, (int, float, str))}
+            rule = model.learning_rule
+            rule_name = type(rule).__name__
+            # __dict__に頼らず、既知のパラメータを明示的に取得
+            rule_params = {
+                "learning_rate": getattr(rule, 'learning_rate', None),
+                "a_plus": getattr(rule, 'a_plus', None),
+                "a_minus": getattr(rule, 'a_minus', None),
+                "tau_trace": getattr(rule, 'tau_trace', None),
+                "tau_eligibility": getattr(rule, 'tau_eligibility', None),
+            }
+            # Noneのパラメータは除外
+            rule_params = {k: v for k, v in rule_params.items() if v is not None}
+            
             hardware_config["learning_rule_config"] = {
                 "rule_name": rule_name,
                 "parameters": rule_params
             }
             print(f"  - 学習則 '{rule_name}' をハードウェア構成にマッピングしました。")
-        # --- ◾️◾️◾️◾️◾️↑追加↑◾️◾️◾️◾️◾️ ---
 
         # 4. 設定ファイルの保存
         with open(output_path, 'w', encoding='utf-8') as f:
