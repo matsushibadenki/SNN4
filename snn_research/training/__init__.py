@@ -10,6 +10,7 @@ from .losses import (
     PlannerLoss, ProbabilisticEnsembleLoss
 )
 from .quantization import apply_qat, convert_to_quantized_model
+from .pruning import apply_magnitude_pruning
 
 __all__ = [
     "BreakthroughTrainer", "DistillationTrainer", "SelfSupervisedTrainer",
@@ -17,5 +18,6 @@ __all__ = [
     "PlannerTrainer", "BPTTTrainer",
     "CombinedLoss", "DistillationLoss", "SelfSupervisedLoss", "PhysicsInformedLoss",
     "PlannerLoss", "ProbabilisticEnsembleLoss",
-    "apply_qat", "convert_to_quantized_model"
+    "apply_qat", "convert_to_quantized_model",
+    "apply_magnitude_pruning"
 ]
