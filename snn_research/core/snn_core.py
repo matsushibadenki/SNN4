@@ -1,11 +1,13 @@
 # ファイルパス: snn_research/core/snn_core.py
+#
 # Title: SNN Core Models
 # Description: This file defines the core SNN architectures for the project.
+# (修正): mypyエラー[operator]を解消するため、set_statefulの呼び出しを修正。
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from spikingjelly.activation_based import functional # type: ignore
+from spikingjelly.activation_based import functional, base # type: ignore
 from typing import Tuple, Dict, Any, Optional, List, Type, cast
 import math
 from omegaconf import DictConfig, OmegaConf
@@ -224,9 +226,10 @@ class SpikingTransformer(BaseModel):
         
         for layer in self.layers:
             block = cast(STAttenBlock, layer)
-            cast(nn.Module, block.lif1).set_stateful(True)
-            cast(nn.Module, block.lif2).set_stateful(True)
-            cast(nn.Module, block.lif3).set_stateful(True)
+            # 修正: base.MemoryModuleにキャストしてset_statefulを呼び出す
+            cast(base.MemoryModule, block.lif1).set_stateful(True)
+            cast(base.MemoryModule, block.lif2).set_stateful(True)
+            cast(base.MemoryModule, block.lif3).set_stateful(True)
 
         for _ in range(self.time_steps):
             for layer in self.layers:
@@ -234,9 +237,10 @@ class SpikingTransformer(BaseModel):
         
         for layer in self.layers:
             block = cast(STAttenBlock, layer)
-            cast(nn.Module, block.lif1).set_stateful(False)
-            cast(nn.Module, block.lif2).set_stateful(False)
-            cast(nn.Module, block.lif3).set_stateful(False)
+            # 修正: base.MemoryModuleにキャストしてset_statefulを呼び出す
+            cast(base.MemoryModule, block.lif1).set_stateful(False)
+            cast(base.MemoryModule, block.lif2).set_stateful(False)
+            cast(base.MemoryModule, block.lif3).set_stateful(False)
 
         x_normalized = self.final_norm(x)
         
