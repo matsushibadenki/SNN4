@@ -1,16 +1,6 @@
 # ファイルパス: snn_research/core/snn_core.py
-# (修正)
-# 修正: 論文「Dynamic Threshold and Multi-level Attention」に基づき、
-#       SpikingTransformerにマルチレベルアテンションメカニズムを導入。
-# 改善(snn_4_ann_parity_plan):
-# - 新しいHybridCnnSnnModelをモデルマップに追加し、設定ファイルから
-#   インスタンス化できるようにした。
-# 修正(mypy): [import-untyped]エラーを解消するため、torchvisionのインポートに
-#             type: ignoreを追加。
-# 修正(syntax): 不正な構文を引き起こしていたマーカーを完全に削除。
-# 改善(snn_4_ann_parity_plan):
-# - SpikingTransformerと関連ブロックが、コンフィグに基づいて
-#   LIFとIzhikevichニューロンを切り替えられるようにリファクタリング。
+# Title: SNN Core Models
+# Description: This file defines the core SNN architectures for the project.
 
 import torch
 import torch.nn as nn
@@ -29,7 +19,6 @@ from .hrm_core import SpikingHRM
 # --- レイヤーとモジュール ---
 
 class PredictiveCodingLayer(nn.Module):
-    # (変更なし)
     error_mean: torch.Tensor
     error_std: torch.Tensor
 
@@ -159,7 +148,6 @@ class STAttenBlock(nn.Module):
         return out
 
 class BreakthroughSNN(BaseModel):
-    # (変更なし)
     def __init__(self, vocab_size: int, d_model: int, d_state: int, num_layers: int, time_steps: int, n_head: int, neuron_config: Optional[Dict[str, Any]] = None, **kwargs: Any):
         super().__init__()
         self.time_steps = time_steps
@@ -263,7 +251,6 @@ class SpikingTransformer(BaseModel):
         return output, avg_spikes, torch.tensor(0.0, device=device)
 
 class SimpleSNN(BaseModel):
-    # (変更なし)
     def __init__(self, vocab_size: int, d_model: int, hidden_size: int, **kwargs: Any):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
@@ -285,12 +272,9 @@ class SimpleSNN(BaseModel):
         logits = torch.stack(outputs, dim=1)
         avg_spikes_val = self.get_total_spikes() / (B * T) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
-        return logits, avg_spikes, torch.tensor(0.0, device=device)
+        return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
 
 class HybridCnnSnnModel(BaseModel):
-    """
-    ANN(CNN)を特徴抽出器として、SNNをバックエンドとして使用するハイブリッドモデル。
-    """
     def __init__(self, vocab_size: int, time_steps: int, ann_frontend: Dict[str, Any], snn_backend: Dict[str, Any], neuron_config: Dict[str, Any], **kwargs: Any):
         super().__init__()
         self.time_steps = time_steps
