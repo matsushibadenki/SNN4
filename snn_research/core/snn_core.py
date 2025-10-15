@@ -2,6 +2,9 @@
 # (修正)
 # 修正: 論文「Dynamic Threshold and Multi-level Attention」に基づき、
 #       SpikingTransformerにマルチレベルアテンションメカニズムを導入。
+# 改善(snn_4_ann_parity_plan):
+# - 新しいHybridCnnSnnModelをモデルマップに追加し、設定ファイルから
+#   インスタンス化できるようにした。
 
 import torch
 import torch.nn as nn
@@ -10,6 +13,7 @@ from spikingjelly.activation_based import functional # type: ignore
 from typing import Tuple, Dict, Any, Optional, List, Type, cast
 import math
 from omegaconf import DictConfig, OmegaConf
+from torchvision import models # torchvisionをインポート
 
 from .base import BaseModel, SNNLayerNorm
 from .neurons import AdaptiveLIFNeuron, IzhikevichNeuron
@@ -56,7 +60,6 @@ class PredictiveCodingLayer(nn.Module):
         
         return updated_state, prediction_error, prediction
 
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 class MultiLevelSpikeDrivenSelfAttention(nn.Module):
     """
     論文に基づき、複数の時間スケールで動作するアテンションメカニズム。
@@ -133,7 +136,6 @@ class STAttenBlock(nn.Module):
         self.lif2 = AdaptiveLIFNeuron(features=d_model * 4)
         self.fc2 = nn.Linear(d_model * 4, d_model)
         self.lif3 = AdaptiveLIFNeuron(features=d_model)
-# ◾️◾️◾◾️◾️◾️◾️◾️◾️◾️️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, D = x.shape
@@ -277,6 +279,80 @@ class SimpleSNN(BaseModel):
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
         return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
 
+# --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
+class HybridCnnSnnModel(BaseModel):
+    """
+    ANN(CNN)を特徴抽出器として、SNNをバックエンドとして使用するハイブリッドモデル。
+    """
+    def __init__(self, vocab_size: int, time_steps: int, ann_frontend: Dict[str, Any], snn_backend: Dict[str, Any], neuron_config: Dict[str, Any], **kwargs: Any):
+        super().__init__()
+        self.time_steps = time_steps
+        
+        # 1. ANNフロントエンドの構築 (例: MobileNetV2)
+        if ann_frontend['name'] == 'mobilenet_v2':
+            # torchvisionから事前学習済みモデルをロード
+            mobilenet = models.mobilenet_v2(pretrained=ann_frontend.get('pretrained', True))
+            # 最後の分類層を除いた特徴抽出部分を取得
+            self.ann_feature_extractor = mobilenet.features
+        else:
+            raise ValueError(f"Unsupported ANN frontend: {ann_frontend['name']}")
+        
+        # ANN部分は学習させない
+        for param in self.ann_feature_extractor.parameters():
+            param.requires_grad = False
+            
+        # 2. ANN出力をSNN入力に変換するエンコーダ
+        self.feature_encoder = nn.Sequential(
+            nn.Linear(ann_frontend['output_features'], snn_backend['d_model']),
+            nn.ReLU()
+        )
+        
+        # 3. SNNバックエンドの構築 (Spiking Transformer)
+        self.snn_backend = nn.ModuleList([
+            STAttenBlock(snn_backend['d_model'], snn_backend['n_head'])
+            for _ in range(snn_backend['num_layers'])
+        ])
+        
+        # 4. 出力層
+        self.output_projection = nn.Linear(snn_backend['d_model'], vocab_size)
+        self._init_weights()
+        
+    def forward(self, input_images: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # このモデルはテキストではなく画像入力を想定 (input_ids -> input_images)
+        B, C, H, W = input_images.shape
+        device = input_images.device
+
+        # 1. ANNによる特徴抽出
+        with torch.no_grad():
+            ann_features = self.ann_feature_extractor(input_images)
+            # Global Average Pooling
+            ann_features = ann_features.mean([2, 3]) # (B, output_features)
+        
+        # 2. 特徴をエンコードし、時間次元に拡張
+        encoded_features = self.feature_encoder(ann_features) # (B, d_model)
+        # SNNバックエンドに入力するために時間次元 (T) を追加
+        snn_input = encoded_features.unsqueeze(1).repeat(1, self.time_steps, 1) # (B, T, d_model)
+
+        # 3. SNNバックエンドによる時空間処理
+        x = snn_input
+        for layer in self.snn_backend:
+            x = layer(x)
+            
+        # 4. 出力
+        # 最後のタイムステップの特徴量を使って分類/生成
+        final_features = x[:, -1, :]
+        logits = self.output_projection(final_features)
+        
+        total_spikes = self.get_total_spikes()
+        avg_spikes_val = total_spikes / (B * self.time_steps) if return_spikes else 0.0
+        avg_spikes = torch.tensor(avg_spikes_val, device=device)
+        mem = torch.tensor(0.0, device=device)
+        
+        return logits, avg_spikes, mem
+
+# --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
+
+
 class SNNCore(nn.Module):
     # (変更なし)
     def __init__(self, config: DictConfig, vocab_size: int):
@@ -296,12 +372,23 @@ class SNNCore(nn.Module):
             "spiking_transformer": SpikingTransformer,
             "spiking_mamba": SpikingMamba,
             "spiking_hrm": SpikingHRM,
-            "simple": SimpleSNN
+            "simple": SimpleSNN,
+            # --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
+            "hybrid_cnn_snn": HybridCnnSnnModel
+            # --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
         }
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
         
-        self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
+        # --- ▼ snn_4_ann_parity_planに基づく修正 ▼ ---
+        # vocab_sizeはテキストベースのモデルにのみ渡す
+        if model_type in ["hybrid_cnn_snn"]:
+             # Hybridモデルは画像入力を想定しているため、vocab_sizeを直接渡さない
+             # 代わりに、最終的な出力クラス数を渡す必要があるが、ここでは暫定的にvocab_sizeを使用
+            self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
+        else:
+            self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
+        # --- ▲ snn_4_ann_parity_planに基づく修正 ▲ ---
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         return self.model(*args, **kwargs)
