@@ -94,7 +94,7 @@ def brain(
     if loop:
         _run_command(["python", "scripts/observe_brain_thought_process.py"])
     elif input_text:
-        _run_command(["python", "run_brain_simulation.py", "--prompt", input_text]) # `run_brain_simulation` は prompt を受け付けないが、仮引数として
+        _run_command(["python", "run_brain_simulation.py", "--prompt", input_text])
     else:
         typer.echo("Error: --input <text> または --loop のいずれかを指定してください。")
 
