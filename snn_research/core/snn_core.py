@@ -7,7 +7,10 @@
 #   インスタンス化できるようにした。
 # 修正(mypy): [import-untyped]エラーを解消するため、torchvisionのインポートに
 #             type: ignoreを追加。
-# 修正(syntax): 不正なコメントマーカーを削除。
+# 修正(syntax): 不正な構文を引き起こしていたマーカーを完全に削除。
+# 改善(snn_4_ann_parity_plan):
+# - SpikingTransformerと関連ブロックが、コンフィグに基づいて
+#   LIFとIzhikevichニューロンを切り替えられるようにリファクタリング。
 
 import torch
 import torch.nn as nn
@@ -65,9 +68,9 @@ class PredictiveCodingLayer(nn.Module):
 
 class MultiLevelSpikeDrivenSelfAttention(nn.Module):
     """
-    論文に基づき、複数の時間スケールで動作するアテンションメカニズム。
+    複数の時間スケールで動作し、スパース性を導入したアテンションメカニズム。
     """
-    def __init__(self, d_model: int, n_head: int, time_scales: List[int] = [1, 3, 5]):
+    def __init__(self, d_model: int, n_head: int, neuron_class: Type[nn.Module], neuron_params: Dict[str, Any], time_scales: List[int] = [1, 3, 5]):
         super().__init__()
         self.d_model = d_model
         self.n_head = n_head
@@ -77,22 +80,26 @@ class MultiLevelSpikeDrivenSelfAttention(nn.Module):
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model * len(time_scales), d_model) # 出力を結合するため次元を調整
+        self.out_proj = nn.Linear(d_model * len(time_scales), d_model)
         
-        self.neuron_q = AdaptiveLIFNeuron(features=d_model)
-        self.neuron_k = AdaptiveLIFNeuron(features=d_model)
-        self.neuron_out = AdaptiveLIFNeuron(features=d_model)
+        self.neuron_q = neuron_class(features=d_model, **neuron_params)
+        self.neuron_k = neuron_class(features=d_model, **neuron_params)
+        self.neuron_out = neuron_class(features=d_model, **neuron_params)
+        
+        self.sparsity_threshold = nn.Parameter(torch.tensor(0.01))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C = x.shape
         
-        q, _ = self.neuron_q(self.q_proj(x))
-        k, _ = self.neuron_k(self.k_proj(x))
-        v = self.v_proj(x) # Valueはスパイク化しないのが一般的
+        q_raw, _ = self.neuron_q(self.q_proj(x))
+        k_raw, _ = self.neuron_k(self.k_proj(x))
+        v = self.v_proj(x)
+
+        q = torch.where(q_raw > self.sparsity_threshold, q_raw, torch.tensor(0.0, device=q_raw.device))
+        k = torch.where(k_raw > self.sparsity_threshold, k_raw, torch.tensor(0.0, device=k_raw.device))
 
         outputs = []
         for scale in self.time_scales:
-            # 時間スケールに応じて入力をプーリング（簡易的な実装）
             if T >= scale and T % scale == 0:
                 q_scaled = F.avg_pool1d(q.transpose(1, 2), kernel_size=scale, stride=scale).transpose(1, 2)
                 k_scaled = F.avg_pool1d(k.transpose(1, 2), kernel_size=scale, stride=scale).transpose(1, 2)
@@ -110,35 +117,28 @@ class MultiLevelSpikeDrivenSelfAttention(nn.Module):
                 
                 attn_output = attn_output.permute(0, 2, 1, 3).contiguous().view(B, T_scaled, C)
                 
-                # 元の時間長にアップサンプリング
                 attn_output_upsampled = F.interpolate(attn_output.transpose(1, 2), size=T, mode='nearest').transpose(1, 2)
                 outputs.append(attn_output_upsampled)
 
-        if not outputs: # スケールが合わなかった場合
+        if not outputs:
              return self.neuron_out(x)[0]
 
-        # 異なる時間スケールからの出力を結合
         concatenated_output = torch.cat(outputs, dim=-1)
-        
-        # 結合した出力を元の次元に戻す
         final_output = self.out_proj(concatenated_output)
-        
-        # 最終出力をスパイク化
         final_spikes, _ = self.neuron_out(final_output.reshape(B*T, -1))
         return final_spikes.reshape(B, T, C)
 
 class STAttenBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int):
+    def __init__(self, d_model: int, n_head: int, neuron_class: Type[nn.Module], neuron_params: Dict[str, Any]):
         super().__init__()
         self.norm1 = SNNLayerNorm(d_model)
-        # 既存のAttentionを新しいMulti-level Attentionに置き換え
-        self.attn = MultiLevelSpikeDrivenSelfAttention(d_model, n_head)
-        self.lif1 = AdaptiveLIFNeuron(features=d_model)
+        self.attn = MultiLevelSpikeDrivenSelfAttention(d_model, n_head, neuron_class, neuron_params)
+        self.lif1 = neuron_class(features=d_model, **neuron_params)
         self.norm2 = SNNLayerNorm(d_model)
         self.fc1 = nn.Linear(d_model, d_model * 4)
-        self.lif2 = AdaptiveLIFNeuron(features=d_model * 4)
+        self.lif2 = neuron_class(features=d_model * 4, **neuron_params)
         self.fc2 = nn.Linear(d_model * 4, d_model)
-        self.lif3 = AdaptiveLIFNeuron(features=d_model)
+        self.lif3 = neuron_class(features=d_model, **neuron_params)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, D = x.shape
@@ -211,14 +211,19 @@ class BreakthroughSNN(BaseModel):
         return output, avg_spikes, torch.tensor(0.0, device=device)
 
 class SpikingTransformer(BaseModel):
-    # (STAttenBlockがMultiLevelSpikeDrivenSelfAttentionを使うように修正済み)
-    def __init__(self, vocab_size: int, d_model: int, n_head: int, num_layers: int, time_steps: int, **kwargs: Any):
+    def __init__(self, vocab_size: int, d_model: int, n_head: int, num_layers: int, time_steps: int, neuron_config: Dict[str, Any], **kwargs: Any):
         super().__init__()
         self.time_steps = time_steps
         self.d_model = d_model
+
+        neuron_type = neuron_config.get("type", "lif")
+        neuron_params = neuron_config.copy()
+        neuron_params.pop('type', None)
+        neuron_class = AdaptiveLIFNeuron if neuron_type == 'lif' else IzhikevichNeuron
+        
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.pos_embedding = nn.Parameter(torch.randn(1, 1024, d_model))
-        self.layers = nn.ModuleList([STAttenBlock(d_model, n_head) for _ in range(num_layers)])
+        self.layers = nn.ModuleList([STAttenBlock(d_model, n_head, neuron_class, neuron_params) for _ in range(num_layers)])
         self.final_norm = SNNLayerNorm(d_model)
         self.output_projection = nn.Linear(d_model, vocab_size)
         self._init_weights()
@@ -231,9 +236,9 @@ class SpikingTransformer(BaseModel):
         
         for layer in self.layers:
             block = cast(STAttenBlock, layer)
-            cast(AdaptiveLIFNeuron, block.lif1).set_stateful(True)
-            cast(AdaptiveLIFNeuron, block.lif2).set_stateful(True)
-            cast(AdaptiveLIFNeuron, block.lif3).set_stateful(True)
+            cast(nn.Module, block.lif1).set_stateful(True)
+            cast(nn.Module, block.lif2).set_stateful(True)
+            cast(nn.Module, block.lif3).set_stateful(True)
 
         for _ in range(self.time_steps):
             for layer in self.layers:
@@ -241,9 +246,9 @@ class SpikingTransformer(BaseModel):
         
         for layer in self.layers:
             block = cast(STAttenBlock, layer)
-            cast(AdaptiveLIFNeuron, block.lif1).set_stateful(False)
-            cast(AdaptiveLIFNeuron, block.lif2).set_stateful(False)
-            cast(AdaptiveLIFNeuron, block.lif3).set_stateful(False)
+            cast(nn.Module, block.lif1).set_stateful(False)
+            cast(nn.Module, block.lif2).set_stateful(False)
+            cast(nn.Module, block.lif3).set_stateful(False)
 
         x_normalized = self.final_norm(x)
         
@@ -280,7 +285,7 @@ class SimpleSNN(BaseModel):
         logits = torch.stack(outputs, dim=1)
         avg_spikes_val = self.get_total_spikes() / (B * T) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
-        return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
+        return logits, avg_spikes, torch.tensor(0.0, device=device)
 
 class HybridCnnSnnModel(BaseModel):
     """
@@ -290,58 +295,48 @@ class HybridCnnSnnModel(BaseModel):
         super().__init__()
         self.time_steps = time_steps
         
-        # 1. ANNフロントエンドの構築 (例: MobileNetV2)
         if ann_frontend['name'] == 'mobilenet_v2':
-            # torchvisionから事前学習済みモデルをロード
             mobilenet = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT if ann_frontend.get('pretrained', True) else None)
-            # 最後の分類層を除いた特徴抽出部分を取得
             self.ann_feature_extractor = mobilenet.features
         else:
             raise ValueError(f"Unsupported ANN frontend: {ann_frontend['name']}")
         
-        # ANN部分は学習させない
         for param in self.ann_feature_extractor.parameters():
             param.requires_grad = False
             
-        # 2. ANN出力をSNN入力に変換するエンコーダ
         self.feature_encoder = nn.Sequential(
             nn.Linear(ann_frontend['output_features'], snn_backend['d_model']),
             nn.ReLU()
         )
         
-        # 3. SNNバックエンドの構築 (Spiking Transformer)
+        neuron_type = neuron_config.get("type", "lif")
+        neuron_params = neuron_config.copy()
+        neuron_params.pop('type', None)
+        neuron_class = AdaptiveLIFNeuron if neuron_type == 'lif' else IzhikevichNeuron
+        
         self.snn_backend = nn.ModuleList([
-            STAttenBlock(snn_backend['d_model'], snn_backend['n_head'])
+            STAttenBlock(snn_backend['d_model'], snn_backend['n_head'], neuron_class, neuron_params)
             for _ in range(snn_backend['num_layers'])
         ])
         
-        # 4. 出力層
         self.output_projection = nn.Linear(snn_backend['d_model'], vocab_size)
         self._init_weights()
         
     def forward(self, input_images: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # このモデルはテキストではなく画像入力を想定 (input_ids -> input_images)
         B, C, H, W = input_images.shape
         device = input_images.device
 
-        # 1. ANNによる特徴抽出
         with torch.no_grad():
             ann_features = self.ann_feature_extractor(input_images)
-            # Global Average Pooling
-            ann_features = ann_features.mean([2, 3]) # (B, output_features)
+            ann_features = ann_features.mean([2, 3])
         
-        # 2. 特徴をエンコードし、時間次元に拡張
-        encoded_features = self.feature_encoder(ann_features) # (B, d_model)
-        # SNNバックエンドに入力するために時間次元 (T) を追加
-        snn_input = encoded_features.unsqueeze(1).repeat(1, self.time_steps, 1) # (B, T, d_model)
+        encoded_features = self.feature_encoder(ann_features)
+        snn_input = encoded_features.unsqueeze(1).repeat(1, self.time_steps, 1)
 
-        # 3. SNNバックエンドによる時空間処理
         x = snn_input
         for layer in self.snn_backend:
             x = layer(x)
             
-        # 4. 出力
-        # 最後のタイムステップの特徴量を使って分類/生成
         final_features = x[:, -1, :]
         logits = self.output_projection(final_features)
         
@@ -376,10 +371,7 @@ class SNNCore(nn.Module):
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
         
-        # vocab_sizeはテキストベースのモデルにのみ渡す
         if model_type in ["hybrid_cnn_snn"]:
-             # Hybridモデルは画像入力を想定しているため、vocab_sizeを直接渡さない
-             # 代わりに、最終的な出力クラス数を渡す必要があるが、ここでは暫定的にvocab_sizeを使用
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
         else:
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
