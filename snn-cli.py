@@ -6,6 +6,7 @@
 #   Typerライブラリを使用し、サブコマンド形式で機能を提供する。
 # 改善点(v2): 各サブコマンドの引数を、呼び出し先のスクリプトと完全に一致するように修正・統一。
 # 改善点(v3): benchmark runコマンドにmrpc_comparisonを追加。
+# 改善点(v4): ann2snn-cnnコマンドがscripts/convert_model.pyを呼び出すように修正。
 import typer
 from typing import Optional, List
 import subprocess
@@ -163,11 +164,11 @@ def benchmark_continual(
 @convert_app.command("ann2snn-cnn")
 def convert_ann2snn_cnn(
     ann_model_path: str = typer.Argument(..., help="変換元の学習済みSimpleCNNモデルのパス (.pth)"),
-    output_path: str = typer.Argument(..., help="変換後のSpikingCNNモデルの保存先パス (.pth)"),
-    snn_config_path: str = typer.Option("configs/cifar10_spikingcnn_config.yaml", help="SpikingCNNのモデル設定ファイル"),
+    output_snn_path: str = typer.Argument(..., help="変換後のSpikingCNNモデルの保存先パス (.pth)"),
+    snn_model_config: str = typer.Option("configs/cifar10_spikingcnn_config.yaml", help="SpikingCNNのモデル設定ファイル"),
 ):
     """学習済みCNN (ANN) をSpikingCNN (SNN) に変換する。"""
-    command = ["python", "scripts/ann2snn_cnn.py", "--ann_model_path", ann_model_path, "--output_path", output_path, "--snn_config_path", snn_config_path]
+    command = ["python", "scripts/convert_model.py", "--method", "cnn-convert", "--ann_model_path", ann_model_path, "--output_snn_path", output_snn_path, "--snn_model_config", snn_model_config]
     _run_command(command)
 
 if __name__ == "__main__":
