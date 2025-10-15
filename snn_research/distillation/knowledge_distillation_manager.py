@@ -1,15 +1,17 @@
-# matsushibadenki/snn4/snn_research/distillation/knowledge_distillation_manager.py
+# ファイルパス: snn_research/distillation/knowledge_distillation_manager.py
 # タイトル: 知識蒸留マネージャー
 # 機能説明: 知識蒸留プロセスを統括するマネージャークラス。
 # BugFix: データセット側で入力とターゲットのペアを正しく作成するように修正し、
 #         collate_fnを簡素化することで、学習データの不整合問題を解消。
 # BugFix: ファイル内にあった不正な閉じ括弧を削除し、mypyの構文エラーを修正。
 # 修正: mypyエラー `Name "Tuple" is not defined` を解消するため、Tupleをインポート。
+# 修正(mypy): [annotation-unchecked] noteを解消するため、内部クラス・関数の
+#             型ヒントを修正・追加。
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from transformers import PreTrainedModel, PreTrainedTokenizer, AutoModelForCausalLM, AutoTokenizer
+from transformers import PreTrainedModel, PreTrainedTokenizer, AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast, Tuple
 import asyncio
 import os
@@ -34,14 +36,22 @@ class KnowledgeDistillationManager:
         self,
         student_model: torch.nn.Module,
         trainer: "DistillationTrainer",
-        teacher_model_name: str,
         tokenizer_name: str,
         model_registry: ModelRegistry,
-        device: str
+        device: str,
+        teacher_model: Optional[torch.nn.Module] = None,
+        teacher_model_name: Optional[str] = None
     ):
         self.student_model = student_model.to(device)
         self.distillation_trainer = trainer
-        self.teacher_model = AutoModelForCausalLM.from_pretrained(teacher_model_name).to(device)
+        
+        if teacher_model is not None:
+            self.teacher_model = teacher_model.to(device)
+        elif teacher_model_name is not None:
+            self.teacher_model = AutoModelForCausalLM.from_pretrained(teacher_model_name).to(device)
+        else:
+            raise ValueError("Either teacher_model or teacher_model_name must be provided.")
+            
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -53,7 +63,7 @@ class KnowledgeDistillationManager:
         テキストデータから知識蒸留用のデータセットとデータローダーを準備する。
         """
         class _DistillationTextDataset(Dataset):
-            def __init__(self, tokenizer, texts, max_length, teacher_model, device):
+            def __init__(self, tokenizer: PreTrainedTokenizerBase, texts: List[str], max_length: int, teacher_model: nn.Module, device: str):
                 self.tokenizer = tokenizer
                 self.texts = texts
                 self.max_length = max_length
@@ -61,7 +71,7 @@ class KnowledgeDistillationManager:
                 self.device = device
                 self.cache: Dict[int, Dict[str, torch.Tensor]] = {}
 
-            def __len__(self):
+            def __len__(self) -> int:
                 return len(self.texts)
 
             def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
@@ -84,7 +94,9 @@ class KnowledgeDistillationManager:
                 
                 with torch.no_grad():
                     # 教師モデルの推論は入力全体で行う
-                    teacher_logits_full = self.teacher_model(input_ids.unsqueeze(0).to(self.device)).logits.squeeze(0).cpu()
+                    teacher_output = self.teacher_model(input_ids.unsqueeze(0).to(self.device))
+                    teacher_logits_full = teacher_output.logits if hasattr(teacher_output, 'logits') else teacher_output
+                    teacher_logits_full = teacher_logits_full.squeeze(0).cpu()
                     # 生徒の入力に対応する部分だけを切り出す
                     teacher_logits = teacher_logits_full[:-1]
                 
@@ -107,7 +119,7 @@ class KnowledgeDistillationManager:
         train_size = len(dataset) - val_size
         train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
-        def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Tuple[torch.Tensor, ...]:
+        def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
             input_ids = torch.stack([item['input_ids'] for item in batch])
             attention_mask = torch.stack([item['attention_mask'] for item in batch])
             targets = torch.stack([item['targets'] for item in batch])
