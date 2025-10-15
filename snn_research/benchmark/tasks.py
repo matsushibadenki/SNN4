@@ -3,7 +3,7 @@
 # Description: GLUEのSST-2, MRPCや、CIFAR-10など、各種ベンチマークタスクを定義する。
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Tuple, Callable, Sized, cast
+from typing import Dict, Any, List, Tuple, Callable, Sized, cast, Optional
 from datasets import load_dataset  # type: ignore
 from tqdm import tqdm
 import torch
@@ -95,10 +95,10 @@ class _GLUEBinaryClassificationTask(BenchmarkTask):
 
     def build_model(self, model_type: str, vocab_size: int) -> nn.Module:
         class SNNClassifier(nn.Module):
-            def __init__(self, snn_backbone, in_features):
+            def __init__(self, snn_backbone, in_features, num_labels):
                 super().__init__()
                 self.snn_backbone = snn_backbone
-                self.classifier = nn.Linear(in_features, self.num_labels)
+                self.classifier = nn.Linear(in_features, num_labels)
             
             def forward(self, input_ids, **kwargs):
                 hidden_states, spikes, mem = self.snn_backbone(
@@ -115,7 +115,7 @@ class _GLUEBinaryClassificationTask(BenchmarkTask):
                 "neuron": {'type': 'lif'}
             }
             backbone = SNNCore(config=OmegaConf.create(snn_config), vocab_size=vocab_size)
-            return SNNClassifier(backbone, in_features=128)
+            return SNNClassifier(backbone, in_features=128, num_labels=self.num_labels)
         else:
             ann_params = {'d_model': 128, 'd_hid': 256, 'nlayers': 4, 'nhead': 4, 'num_classes': self.num_labels}
             return ANNBaselineModel(vocab_size=vocab_size, **ann_params)
@@ -125,7 +125,7 @@ class _GLUEBinaryClassificationTask(BenchmarkTask):
         true_labels: List[int] = []
         pred_labels: List[int] = []
         total_spikes = 0
-        num_neurons = sum(p.numel() for p in model.parameters())
+        num_neurons: int = sum(p.numel() for p in model.parameters())
         
         with torch.no_grad():
             for batch in tqdm(loader, desc=f"Evaluating {self.task_name.upper()}"):
@@ -204,7 +204,7 @@ class CIFAR10Task(BenchmarkTask):
         true_labels: List[int] = []
         pred_labels: List[int] = []
         total_spikes = 0
-        num_neurons = sum(p.numel() for p in model.parameters())
+        num_neurons: int = sum(p.numel() for p in model.parameters())
 
         with torch.no_grad():
             for batch in tqdm(loader, desc="Evaluating CIFAR-10"):
