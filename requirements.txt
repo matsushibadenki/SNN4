@@ -26,3 +26,4 @@ requests
 langchain-huggingface
 langchain-huggingface
 googlesearch-python
+snntorch
