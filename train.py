@@ -4,10 +4,10 @@
 # 新しい統合学習実行スクリプト (完全版)
 #
 # (省略...)
-# - 改善点 (v4): 継続学習(EWC)のためのFisher行列計算処理を追加。
 # - 改善点 (snn_4_ann_parity_plan): 量子化認識学習(QAT)の適用ロジックを追加。
 # - 改善点 (snn_4_ann_parity_plan): 学習後の構造的プルーニング機能を追加。
 # - 修正(mypy): [arg-type]エラーを解消するため、castを使用して型を明示。
+# - 改善点(snn_4_ann_parity_plan): EWCデータのロード機能を追加。
 
 import argparse
 import os
@@ -139,7 +139,12 @@ def train(
             scheduler = container.pe_scheduler(optimizer=optimizer) if config['training']['probabilistic_ensemble']['use_scheduler'] else None
             trainer = container.probabilistic_ensemble_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
 
-        
+        # --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
+        if args.load_ewc_data:
+            if isinstance(trainer, BreakthroughTrainer):
+                trainer.load_ewc_data(args.load_ewc_data)
+        # --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
+
         start_epoch = trainer.load_checkpoint(args.resume_path) if args.resume_path else 0
         for epoch in range(start_epoch, config['training']['epochs']):
             if train_sampler: train_sampler.set_epoch(epoch)
@@ -160,19 +165,16 @@ def train(
     else:
         raise ValueError(f"Unknown or unsupported training paradigm for this script: '{paradigm}'.")
 
-    # 学習完了後、QATモデルの変換やプルーニングを実行
     if rank in [-1, 0]:
         final_model_unwrapped = trainer.model.module if is_distributed else trainer.model
         final_model = cast(nn.Module, final_model_unwrapped)
         
-        # QATが有効な場合、量子化モデルに変換して保存
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
             quantized_model = convert_to_quantized_model(final_model)
             quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
             torch.save(quantized_model.state_dict(), quantized_path)
             print(f"✅ 量子化済みモデルを '{quantized_path}' に保存しました。")
         
-        # プルーニングが有効な場合、モデルをプルーニングして保存
         if config.get('training', {}).get('pruning', {}).get('enabled', False):
             pruning_amount = config['training']['pruning'].get('amount', 0.2)
             pruned_model = apply_magnitude_pruning(final_model, amount=pruning_amount)
@@ -205,10 +207,11 @@ def main():
     parser.add_argument("--config", type=str, default="configs/base_config.yaml", help="基本設定ファイル")
     parser.add_argument("--model_config", type=str, help="モデルアーキテクチャ設定ファイル")
     parser.add_argument("--data_path", type=str, help="データセットのパス（configを上書き）")
-    parser.add_argument("--task_name", type=str, help="EWCのためにタスク名を指定 (例: 'wikitext')")
+    parser.add_argument("--task_name", type=str, help="EWCのためにタスク名を指定 (例: 'sst2')")
     parser.add_argument("--override_config", type=str, action='append', help="設定を上書き (例: 'training.epochs=5')")
     parser.add_argument("--distributed", action="store_true", help="分散学習を有効にする")
     parser.add_argument("--resume_path", type=str, help="チェックポイントから学習を再開する")
+    parser.add_argument("--load_ewc_data", type=str, help="事前計算されたEWCのFisher行列とパラメータのパス")
     parser.add_argument("--use_astrocyte", action="store_true", help="アストロサイトネットワークを有効にする (gradient_based系のみ)")
     parser.add_argument("--paradigm", type=str, help="学習パラダイムを上書き (例: gradient_based, bio-causal-sparse, bio-particle-filter)")
     args = parser.parse_args()
