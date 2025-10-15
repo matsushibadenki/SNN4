@@ -6,6 +6,7 @@
 # 改善(snn_4_ann_parity_plan):
 # - CIFAR-10データセットを扱うCIFAR10Taskを新たに追加。
 # - HybridCnnSnnModelの構築と評価ロジックを実装。
+# 修正(mypy): [name-defined]エラーを解消するため、torchvision.modelsをインポート。
 
 import os
 import json
@@ -20,7 +21,7 @@ from transformers import PreTrainedTokenizerBase
 from omegaconf import OmegaConf
 
 # snn_4_ann_parity_planに基づく追加
-from torchvision import datasets, transforms # type: ignore
+from torchvision import datasets, transforms, models # type: ignore
 
 from snn_research.core.snn_core import BreakthroughSNN, SNNCore
 from snn_research.benchmark.ann_baseline import ANNBaselineModel
@@ -131,10 +132,8 @@ class SST2Task(BenchmarkTask):
                 "n_head": 2,
                 "neuron": {'type': 'lif'}
             }
-            # --- ◾️◾️◾️◾️◾️↓修正↓◾️◾️◾️◾️◾️ ---
             # DictConfigに変換
             backbone = SNNCore(config=OmegaConf.create(snn_config), vocab_size=vocab_size)
-            # --- ◾️◾️◾️◾️◾️↑修正↑◾️◾️◾️◾️◾️ ---
             return SNNClassifier(backbone)
         else:
             ann_params = {'d_model': 64, 'd_hid': 128, 'nlayers': 2, 'nhead': 2, 'num_classes': 2}
@@ -175,7 +174,6 @@ class SST2Task(BenchmarkTask):
             "estimated_energy_j": energy_j,
         }
 
-# --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
 class CIFAR10Task(BenchmarkTask):
     """CIFAR-10画像分類タスク。"""
 
@@ -220,7 +218,7 @@ class CIFAR10Task(BenchmarkTask):
             return SNNCore(config=OmegaConf.create({"model": hybrid_config}), vocab_size=num_classes)
         else: # ANN
             # 比較用のANNとして事前学習済みMobileNetV2を使用
-            model = models.mobilenet_v2(pretrained=True)
+            model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
             model.classifier[1] = nn.Linear(model.last_channel, num_classes)
             return model
 
@@ -264,4 +262,3 @@ class CIFAR10Task(BenchmarkTask):
             "avg_spikes": avg_spikes,
             "estimated_energy_j": energy_j,
         }
-# --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
