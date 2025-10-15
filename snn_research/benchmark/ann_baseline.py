@@ -1,18 +1,13 @@
-# matsushibadenki/snn4/snn_research/benchmark/ann_baseline.py
+# ファイルパス: snn_research/benchmark/ann_baseline.py
 #
 # SNNモデルとの性能比較を行うためのANNベースラインモデル
 #
-# 目的:
-# - ロードマップ フェーズ1「1.2. ANNベースラインとの比較」に対応。
-# - SNNとほぼ同等のパラメータ数を持つ標準的なANNモデルを実装し、
-#   公平な性能比較の土台を築く。
-#
-# アーキテクチャ:
-# - 事前学習済みモデルは使用せず、スクラッチで学習するシンプルなTransformerエンコーダを採用。
-# - 単語埋め込み層 + Transformerエンコーダ層 + 分類ヘッドという標準的な構成。
-# 修正点:
+# (省略)
 # - forwardメソッドの戻り値を3つのタプルに変更し、SNNモデルのインターフェースと統一した。
-#   これにより、Trainerクラスで発生する `ValueError: not enough values to unpack` を解消する。
+#
+# 改善(snn_4_ann_parity_plan):
+# - CIFAR-10などの画像分類タスクで、SpikingCNNとの直接比較および変換を行うための
+#   シンプルなCNNベースラインモデル(SimpleCNN)を追加。
 
 import torch
 import torch.nn as nn
@@ -73,4 +68,39 @@ class ANNBaselineModel(nn.Module):
 
         logits = self.classifier(pooled)
         # SNN評価との互換性のため、3つのタプルで返す
+        return logits, None, None
+
+class SimpleCNN(nn.Module):
+    """
+    画像分類用のシンプルなCNN。SpikingCNNのANNベースラインとして機能する。
+    Architecture: Conv -> ReLU -> AvgPool -> Conv -> ReLU -> AvgPool -> FC -> ReLU -> FC
+    """
+    def __init__(self, num_classes: int = 10):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.AvgPool2d(2),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.AvgPool2d(2),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(32 * 56 * 56, 128),
+            nn.ReLU(),
+            nn.Linear(128, num_classes),
+        )
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, input_images: torch.Tensor, **kwargs) -> Tuple[torch.Tensor, None, None]:
+        x = self.features(input_images)
+        logits = self.classifier(x)
         return logits, None, None
