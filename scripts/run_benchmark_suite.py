@@ -1,6 +1,7 @@
 # ファイルパス: scripts/run_benchmark_suite.py
 # Title: 統合ベンチマークスイート
 # Description: 複数のベンチマーク実験を体系的に実行し、結果をリーダーボード形式でレポートに追記する。
+# 改善点(v2): MRPCタスクの比較実験を追加。
 import argparse
 import time
 import pandas as pd  # type: ignore
@@ -98,6 +99,26 @@ def run_sst2_comparison(args: argparse.Namespace) -> pd.DataFrame:
     results.append(snn_metrics)
     return pd.DataFrame(results)
 
+def run_mrpc_comparison(args: argparse.Namespace) -> pd.DataFrame:
+    """MRPCでANNとSNNの性能を比較する実験を実行する。"""
+    device = get_auto_device()
+    TaskClass = TASK_REGISTRY["mrpc"]
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.sep_token is None: tokenizer.sep_token = tokenizer.eos_token
+    task = TaskClass(tokenizer=tokenizer, device=device, hardware_profile={})
+    
+    train_dataset, val_dataset = task.prepare_data(data_dir="data")
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn(), shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn())
+
+    results = []
+    ann_metrics = train_and_evaluate_model('ANN', task, train_loader, val_loader, device, args.epochs, args.learning_rate, vocab_size=tokenizer.vocab_size)
+    results.append(ann_metrics)
+    snn_metrics = train_and_evaluate_model('SNN', task, train_loader, val_loader, device, args.epochs, args.learning_rate, vocab_size=tokenizer.vocab_size)
+    results.append(snn_metrics)
+    return pd.DataFrame(results)
+
 def save_report(df: pd.DataFrame, output_dir: str, experiment_name: str, args: argparse.Namespace):
     """実験結果をMarkdown形式でリーダーボードに追記する。"""
     output_path = Path(output_dir)
@@ -136,18 +157,23 @@ def main(args: argparse.Namespace):
         save_report(cifar10_results_df, args.output_dir, "cifar10_ann_vs_snn", args)
         sst2_results_df = run_sst2_comparison(args)
         save_report(sst2_results_df, args.output_dir, "sst2_ann_vs_snn", args)
+        mrpc_results_df = run_mrpc_comparison(args)
+        save_report(mrpc_results_df, args.output_dir, "mrpc_ann_vs_snn", args)
     elif args.experiment == "cifar10_comparison":
         results_df = run_cifar10_comparison(args)
         save_report(results_df, args.output_dir, "cifar10_ann_vs_snn", args)
     elif args.experiment == "sst2_comparison":
         results_df = run_sst2_comparison(args)
         save_report(results_df, args.output_dir, "sst2_ann_vs_snn", args)
+    elif args.experiment == "mrpc_comparison":
+        results_df = run_mrpc_comparison(args)
+        save_report(results_df, args.output_dir, "mrpc_ann_vs_snn", args)
     else:
         print(f"Unknown experiment: {args.experiment}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SNN vs ANN Benchmark Suite")
-    parser.add_argument("--experiment", type=str, default="all", choices=["all", "cifar10_comparison", "sst2_comparison"], help="実行する実験を選択します。")
+    parser.add_argument("--experiment", type=str, default="all", choices=["all", "cifar10_comparison", "sst2_comparison", "mrpc_comparison"], help="実行する実験を選択します。")
     parser.add_argument("--tag", type=str, help="実験にカスタムタグを付けます。")
     parser.add_argument("--epochs", type=int, default=3, help="訓練のエポック数。")
     parser.add_argument("--batch_size", type=int, default=32, help="訓練と評価のバッチサイズ。")
