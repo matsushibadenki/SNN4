@@ -5,6 +5,8 @@
 # 改善(snn_4_ann_parity_plan):
 # - 新しいHybridCnnSnnModelをモデルマップに追加し、設定ファイルから
 #   インスタンス化できるようにした。
+# 修正(mypy): [import-untyped]エラーを解消するため、torchvisionのインポートに
+#             type: ignoreを追加。
 
 import torch
 import torch.nn as nn
@@ -13,7 +15,7 @@ from spikingjelly.activation_based import functional # type: ignore
 from typing import Tuple, Dict, Any, Optional, List, Type, cast
 import math
 from omegaconf import DictConfig, OmegaConf
-from torchvision import models # torchvisionをインポート
+from torchvision import models # type: ignore
 
 from .base import BaseModel, SNNLayerNorm
 from .neurons import AdaptiveLIFNeuron, IzhikevichNeuron
@@ -279,7 +281,6 @@ class SimpleSNN(BaseModel):
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
         return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
 
-# --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
 class HybridCnnSnnModel(BaseModel):
     """
     ANN(CNN)を特徴抽出器として、SNNをバックエンドとして使用するハイブリッドモデル。
@@ -291,7 +292,7 @@ class HybridCnnSnnModel(BaseModel):
         # 1. ANNフロントエンドの構築 (例: MobileNetV2)
         if ann_frontend['name'] == 'mobilenet_v2':
             # torchvisionから事前学習済みモデルをロード
-            mobilenet = models.mobilenet_v2(pretrained=ann_frontend.get('pretrained', True))
+            mobilenet = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT if ann_frontend.get('pretrained', True) else None)
             # 最後の分類層を除いた特徴抽出部分を取得
             self.ann_feature_extractor = mobilenet.features
         else:
@@ -350,11 +351,7 @@ class HybridCnnSnnModel(BaseModel):
         
         return logits, avg_spikes, mem
 
-# --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
-
-
 class SNNCore(nn.Module):
-    # (変更なし)
     def __init__(self, config: DictConfig, vocab_size: int):
         super(SNNCore, self).__init__()
         if isinstance(config, dict):
@@ -373,14 +370,11 @@ class SNNCore(nn.Module):
             "spiking_mamba": SpikingMamba,
             "spiking_hrm": SpikingHRM,
             "simple": SimpleSNN,
-            # --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
             "hybrid_cnn_snn": HybridCnnSnnModel
-            # --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
         }
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
         
-        # --- ▼ snn_4_ann_parity_planに基づく修正 ▼ ---
         # vocab_sizeはテキストベースのモデルにのみ渡す
         if model_type in ["hybrid_cnn_snn"]:
              # Hybridモデルは画像入力を想定しているため、vocab_sizeを直接渡さない
@@ -388,7 +382,6 @@ class SNNCore(nn.Module):
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
         else:
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
-        # --- ▲ snn_4_ann_parity_planに基づく修正 ▲ ---
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         return self.model(*args, **kwargs)
