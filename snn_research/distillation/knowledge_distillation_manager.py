@@ -8,12 +8,13 @@
 # 修正(mypy): [annotation-unchecked] noteを解消するため、内部クラス・関数の
 #             型ヒントを修正・追加。
 # 改善点(v2): データセットの準備ロジックを汎用化し、画像データセットにも対応。
+# 修正(v3): mypyエラー [arg-type] を解消するため、castを使用して型を明示。
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedModel, PreTrainedTokenizer, AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
-from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast, Tuple, Callable
+from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast, Tuple, Callable, Sized
 import asyncio
 import os
 import json
@@ -76,7 +77,7 @@ class KnowledgeDistillationManager:
                 self.device = device
 
             def __len__(self) -> int:
-                return len(self.original_dataset)
+                return len(cast(Sized, self.original_dataset))
 
             @torch.no_grad()
             def __getitem__(self, idx: int) -> Dict[str, Any]:
@@ -93,11 +94,21 @@ class KnowledgeDistillationManager:
         train_wrapper = _DistillationWrapperDataset(train_dataset, self.teacher_model, self.device)
         val_wrapper = _DistillationWrapperDataset(val_dataset, self.teacher_model, self.device)
         
-        def distillation_collate_fn(batch: List[Dict[str, Any]]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        def distillation_collate_fn(batch: List[Dict[str, Any]]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            # This collate function now expects image data as well
+            # The trainer's _run_step needs to handle both text and image dicts
+            
+            # This part is a bit tricky as the input key can be different ('input_ids' vs 'input_images')
+            # Let's assume for now the trainer handles a generic 'inputs' key
             inputs = torch.stack([item['inputs'] for item in batch])
+            attention_mask = torch.ones_like(inputs)[:, 0, 0, :] # Dummy mask for images, needs improvement
             labels = torch.tensor([item['labels'] for item in batch], dtype=torch.long)
             teacher_logits = torch.stack([item['teacher_logits'] for item in batch])
-            return inputs, labels, teacher_logits
+            
+            # The trainer expects a batch of (student_input, attention_mask, student_target, teacher_logits)
+            # We need to adapt this for images.
+            # For images, the input itself is the student input. Attention mask is not really used.
+            return inputs, attention_mask, labels, teacher_logits
 
         train_loader = DataLoader(train_wrapper, batch_size=batch_size, collate_fn=distillation_collate_fn, shuffle=True)
         val_loader = DataLoader(val_wrapper, batch_size=batch_size, collate_fn=distillation_collate_fn)
@@ -139,7 +150,6 @@ class KnowledgeDistillationManager:
         save_path = os.path.join(save_dir, "best_model.pth")
         print(f"Step 3: Saving the model to {save_path}...")
         
-        # 【根本修正】推論時の不整合を防ぐため、保存すべきでない一時的なバッファを全て除外する
         model_to_save = self.distillation_trainer.model.module if isinstance(self.distillation_trainer.model, nn.parallel.DistributedDataParallel) else self.distillation_trainer.model
         buffers_to_exclude = {
             name for name, _ in model_to_save.named_buffers() 
@@ -179,20 +189,19 @@ class KnowledgeDistillationManager:
         if student_config is None:
             raise ValueError("student_config is None, cannot proceed.")
 
-        texts = []
-        with open(unlabeled_data_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    texts.append(json.loads(line)['text'])
-                except (json.JSONDecodeError, KeyError):
-                    if line.strip():
-                        texts.append(line.strip())
-        
+        # This part is text-specific and needs to be handled by a different data preparation logic
+        if not os.path.isdir(unlabeled_data_path):
+             with open(unlabeled_data_path, 'r', encoding='utf-8') as f:
+                texts = [json.loads(line)['text'] for line in f if line.strip()]
+        else:
+             raise NotImplementedError("On-demand pipeline for image directories not implemented yet.")
+
         if not texts:
             print("❌ No text found in the provided data file. Aborting.")
             return None
 
-        # This part is now text-specific and needs adaptation for generic datasets
+        # The logic here is for text, it would fail for images.
+        # This highlights the need for a more abstract data preparation step.
         raise NotImplementedError("run_on_demand_pipeline for text needs to be refactored to use the new prepare_dataset method.")
 
     async def evaluate_model(self, dataloader: DataLoader) -> Dict[str, float]:
