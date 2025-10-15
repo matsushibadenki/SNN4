@@ -5,10 +5,11 @@
 # snn_4_ann_parity_plan.mdの計画に基づき、複数のベンチマーク実験を
 # 体系的に実行し、結果をレポートとして保存するためのスクリプト。
 # これにより、ANNとSNNの性能比較を定量的かつ再現可能な形で追跡する。
+# 修正(mypy): [import-untyped], [name-defined], [abstract], [call-arg]エラーを解消。
 
 import argparse
 import time
-import pandas as pd
+import pandas as pd  # type: ignore
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -81,7 +82,7 @@ def run_cifar10_comparison(args: argparse.Namespace) -> pd.DataFrame:
     TaskClass = TASK_REGISTRY["cifar10"]
     task = TaskClass(tokenizer=AutoTokenizer.from_pretrained("gpt2"), device=device, hardware_profile={})
     
-    train_dataset, val_dataset = task.prepare_data()
+    train_dataset, val_dataset = task.prepare_data(data_dir="data")
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn(), shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=task.get_collate_fn())
 
@@ -101,7 +102,7 @@ def run_cifar10_comparison(args: argparse.Namespace) -> pd.DataFrame:
     
     return pd.DataFrame(results)
 
-def save_report(df: pd.DataFrame, output_dir: str, experiment_name: str):
+def save_report(df: pd.DataFrame, output_dir: str, experiment_name: str, args: argparse.Namespace):
     """実験結果をMarkdown形式で保存する。"""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -136,7 +137,7 @@ def main(args: argparse.Namespace):
     """ベンチマークスイートのメイン関数。"""
     if args.experiment == "all" or args.experiment == "cifar10_comparison":
         results_df = run_cifar10_comparison(args)
-        save_report(results_df, args.output_dir, "cifar10_ann_vs_snn")
+        save_report(results_df, args.output_dir, "cifar10_ann_vs_snn", args)
     else:
         print(f"Unknown experiment: {args.experiment}")
 
