@@ -4,11 +4,8 @@
 # 新しい統合学習実行スクリプト (完全版)
 #
 # (省略...)
-# - 変更点: 不要になった古い生物学的学習(BioTrainer)のコードブロックを削除。
-# - BugFix: 'physics_informed'や'self_supervised'パラダイムでもモデルが保存されるように修正。
-# - 改善点 (v2): 新しい生物学的学習パラダイム（適応的因果スパース化、パーティクルフィルタ）に対応。
-# - 修正点 (v3): mypyエラー [attr-defined], [call-arg] を解消。
 # - 改善点 (v4): 継続学習(EWC)のためのFisher行列計算処理を追加。
+# - 改善点 (snn_4_ann_parity_plan): 量子化認識学習(QAT)の適用ロジックを追加。
 
 import argparse
 import os
@@ -104,7 +101,21 @@ def train(
             raise NotImplementedError(f"{paradigm} learning does not support DDP yet.")
         
         snn_model: nn.Module = container.snn_model().to(device)
+
+        # --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
+        # 量子化認識学習(QAT)が有効な場合、モデルに量子化スタブを適用
+        if config.get('training', {}).get('quantization', {}).get('enabled', False):
+            from snn_research.training.quantization import apply_qat
+            # QATはCPUでのみサポートされているバックエンドが多いため、一時的にCPUに移動
+            snn_model.to('cpu')
+            snn_model = apply_qat(snn_model)
+            snn_model.to(device)
+            print(" 量子化認識学習（QAT）が有効になりました。")
+        # --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
+
         if is_distributed:
+            if config.get('training', {}).get('quantization', {}).get('enabled', False):
+                print("⚠️ 警告: 量子化認識学習(QAT)と分散学習(DDP)の併用は実験的です。")
             snn_model = DDP(snn_model, device_ids=[rank], find_unused_parameters=True)
         
         astrocyte = container.astrocyte_network(snn_model=snn_model) if args.use_astrocyte else None
