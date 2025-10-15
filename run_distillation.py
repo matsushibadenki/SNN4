@@ -4,11 +4,15 @@
 #              設定ファイルとコマンドライン引数からパラメータを読み込みます。
 #              mypyエラー修正: ContainerをTrainingContainerに修正。
 # 改善点: argparseを追加し、asyncio.runで実行するように修正。
+# 改善点(snn_4_ann_parity_plan):
+# - ANN教師モデルとして、AutoModelForCausalLMの代わりに具体的なANNBaselineModelを
+#   インスタンス化するように修正し、より管理された蒸留プロセスを実現。
 
 import argparse
 import asyncio
 from app.containers import TrainingContainer
 from snn_research.distillation.knowledge_distillation_manager import KnowledgeDistillationManager
+from snn_research.benchmark.ann_baseline import ANNBaselineModel
 
 async def main():
     parser = argparse.ArgumentParser(description="SNN Knowledge Distillation Runner")
@@ -27,8 +31,23 @@ async def main():
     student_model = container.snn_model().to(device)
     optimizer = container.optimizer(params=student_model.parameters())
     scheduler = container.scheduler(optimizer=optimizer) if container.config.training.gradient_based.use_scheduler() else None
-    
-    # 依存関係をオーバーライドしてtrainerをインスタンス化
+
+    # --- ▼ snn_4_ann_parity_planに基づく修正 ▼ ---
+    # 教師モデルとしてANNBaselineModelを明示的に構築
+    print("🧠 Initializing ANN teacher model (ANNBaselineModel)...")
+    snn_config = container.config.model.to_dict()
+    teacher_model = ANNBaselineModel(
+        vocab_size=container.tokenizer.provided.vocab_size(),
+        d_model=snn_config.get('d_model', 128),
+        nhead=snn_config.get('n_head', 2),
+        d_hid=snn_config.get('d_model', 128) * 4, # 一般的なFFNの拡張率
+        nlayers=snn_config.get('num_layers', 4),
+        num_classes=container.tokenizer.provided.vocab_size()
+    ).to(device)
+    # 注: 実際の使用例では、ここで教師モデルの学習済み重みをロードします
+    # teacher_model.load_state_dict(torch.load("path/to/teacher.pth"))
+    # --- ▲ snn_4_ann_parity_planに基づく修正 ▲ ---
+
     distillation_trainer = container.distillation_trainer(
         model=student_model,
         optimizer=optimizer,
@@ -36,16 +55,17 @@ async def main():
         device=device
     )
     model_registry = container.model_registry()
-    # --- ▲ 修正 ▲ ---
-    
+
     manager = KnowledgeDistillationManager(
         student_model=student_model,
+        # teacher_model_nameの代わりに、インスタンス化された教師モデルを渡すように変更
+        teacher_model=teacher_model,
         trainer=distillation_trainer,
-        teacher_model_name=container.config.training.gradient_based.distillation.teacher_model(),
         tokenizer_name=container.config.data.tokenizer_name(),
         model_registry=model_registry,
         device=device
     )
+    # --- ▲ 修正 ▲ ---
 
     # (仮) データセットの準備
     # 実際には、ファイルからテキストデータをロードする
