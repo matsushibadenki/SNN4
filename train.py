@@ -6,6 +6,7 @@
 # (省略...)
 # - 改善点 (v4): 継続学習(EWC)のためのFisher行列計算処理を追加。
 # - 改善点 (snn_4_ann_parity_plan): 量子化認識学習(QAT)の適用ロジックを追加。
+# - 改善点 (snn_4_ann_parity_plan): 学習後の構造的プルーニング機能を追加。
 
 import argparse
 import os
@@ -21,6 +22,8 @@ from app.containers import TrainingContainer
 from snn_research.data.datasets import get_dataset_class, DistillationDataset, DataFormat, SNNBaseDataset
 from snn_research.training.trainers import BreakthroughTrainer, ParticleFilterTrainer
 from snn_research.training.bio_trainer import BioRLTrainer
+from snn_research.training.quantization import apply_qat, convert_to_quantized_model
+from snn_research.training.pruning import apply_magnitude_pruning
 from scripts.data_preparation import prepare_wikitext_data
 from snn_research.core.snn_core import SNNCore
 from app.utils import get_auto_device
@@ -102,16 +105,11 @@ def train(
         
         snn_model: nn.Module = container.snn_model().to(device)
 
-        # --- ▼ snn_4_ann_parity_planに基づく追加 ▼ ---
-        # 量子化認識学習(QAT)が有効な場合、モデルに量子化スタブを適用
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
-            from snn_research.training.quantization import apply_qat
-            # QATはCPUでのみサポートされているバックエンドが多いため、一時的にCPUに移動
             snn_model.to('cpu')
             snn_model = apply_qat(snn_model)
             snn_model.to(device)
             print(" 量子化認識学習（QAT）が有効になりました。")
-        # --- ▲ snn_4_ann_parity_planに基づく追加 ▲ ---
 
         if is_distributed:
             if config.get('training', {}).get('quantization', {}).get('enabled', False):
@@ -153,7 +151,6 @@ def train(
                         tokenizer_name=config['data']['tokenizer_name'], config=config['model']
                     )
         
-        # 継続学習のために、このタスクのFisher行列を計算・保存する
         if rank in [-1, 0] and args.task_name and config['training']['gradient_based']['loss']['ewc_weight'] > 0:
             if isinstance(trainer, BreakthroughTrainer):
                 trainer._compute_ewc_fisher_matrix(train_loader, args.task_name)
@@ -161,7 +158,26 @@ def train(
     else:
         raise ValueError(f"Unknown or unsupported training paradigm for this script: '{paradigm}'.")
 
-    if rank in [-1, 0]: print("✅ 学習が完了しました。")
+    # 学習完了後、QATモデルの変換やプルーニングを実行
+    if rank in [-1, 0]:
+        final_model = trainer.model.module if is_distributed else trainer.model
+        
+        # QATが有効な場合、量子化モデルに変換して保存
+        if config.get('training', {}).get('quantization', {}).get('enabled', False):
+            quantized_model = convert_to_quantized_model(final_model)
+            quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
+            torch.save(quantized_model.state_dict(), quantized_path)
+            print(f"✅ 量子化済みモデルを '{quantized_path}' に保存しました。")
+        
+        # プルーニングが有効な場合、モデルをプルーニングして保存
+        if config.get('training', {}).get('pruning', {}).get('enabled', False):
+            pruning_amount = config['training']['pruning'].get('amount', 0.2)
+            pruned_model = apply_magnitude_pruning(final_model, amount=pruning_amount)
+            pruned_path = os.path.join(config['training']['log_dir'], 'pruned_best_model.pth')
+            torch.save(pruned_model.state_dict(), pruned_path)
+            print(f"✅ プルーニング済みモデルを '{pruned_path}' に保存しました。")
+
+        print("✅ 学習が完了しました。")
 
 
 def collate_fn(tokenizer, is_distillation: bool) -> Callable[[List[Tuple[torch.Tensor, ...]]], Tuple[torch.Tensor, ...]]:
