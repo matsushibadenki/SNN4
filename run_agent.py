@@ -1,4 +1,4 @@
-# ファイルパス: matsushibadenki/snn4/snn4-190ede29139f560c909685675a68ccf65069201c/run_agent.py
+# ファイルパス: run_agent.py
 #
 # 自律エージェントを起動し、タスクを実行させるためのインターフェース
 #
@@ -6,10 +6,11 @@
 # - 推論実行ロジックのコメントアウトを解除。
 # - ヘルプメッセージを改善。
 # - 改善点: DIコンテナと同様に、エージェントに必要な依存関係を初期化して注入するように修正。
+# - 改善点(v2): BrainContainerからエージェントを取得するように修正し、プロジェクト全体の一貫性を向上。
 
 import argparse
 import asyncio
-from app.containers import AgentContainer # DIコンテナをインポート
+from app.containers import BrainContainer # AgentContainerからBrainContainerに変更
 
 def main():
     """
@@ -40,31 +41,22 @@ def main():
         action="store_true",
         help="このフラグを立てると、モデル登録簿のチェックをスキップして強制的に再学習します。"
     )
+    parser.add_argument(
+        "--model_config",
+        type=str,
+        default="configs/models/small.yaml",
+        help="使用するモデルのアーキテクチャ設定ファイル。"
+    )
 
     args = parser.parse_args()
 
-    # --- 改善: DIコンテナを使用して依存関係を構築 ---
-    container = AgentContainer()
+    # --- DIコンテナを使用して依存関係を構築 ---
+    container = BrainContainer()
     container.config.from_yaml("configs/base_config.yaml")
+    container.config.from_yaml(args.model_config)
     
-    # AgentContainerから直接AutonomousAgentをインスタンス化
-    # (AgentContainerにAutonomousAgentのプロバイダを追加する必要がある)
-    # ここでは、必要なコンポーネントを個別に取得して注入する
-    planner = container.hierarchical_planner()
-    model_registry = container.model_registry()
-    memory = container.memory()
-    web_crawler = container.web_crawler()
-
-    # --- 自律エージェントの初期化 ---
-    # AutonomousAgentクラスをインポート
-    from snn_research.agent.autonomous_agent import AutonomousAgent
-    agent = AutonomousAgent(
-        name="run_agent_instance",
-        planner=planner,
-        model_registry=model_registry,
-        memory=memory,
-        web_crawler=web_crawler
-    )
+    # コンテナから完成品の自律エージェントを取得
+    agent = container.autonomous_agent()
 
 
     # --- エージェントにタスク処理を依頼 ---
