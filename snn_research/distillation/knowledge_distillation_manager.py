@@ -7,12 +7,13 @@
 # 修正: mypyエラー `Name "Tuple" is not defined` を解消するため、Tupleをインポート。
 # 修正(mypy): [annotation-unchecked] noteを解消するため、内部クラス・関数の
 #             型ヒントを修正・追加。
+# 改善点(v2): データセットの準備ロジックを汎用化し、画像データセットにも対応。
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedModel, PreTrainedTokenizer, AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
-from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast, Tuple
+from typing import Dict, Any, Optional, List, TYPE_CHECKING, cast, Tuple, Callable
 import asyncio
 import os
 import json
@@ -58,76 +59,48 @@ class KnowledgeDistillationManager:
         self.model_registry = model_registry
         self.device = device
 
-    def prepare_dataset(self, texts: List[str], max_length: int, batch_size: int, validation_split: float = 0.1) -> Tuple[DataLoader, DataLoader]:
+    def prepare_dataset(
+        self,
+        train_dataset: Dataset,
+        val_dataset: Dataset,
+        collate_fn: Callable,
+        batch_size: int
+    ) -> Tuple[DataLoader, DataLoader]:
         """
-        テキストデータから知識蒸留用のデータセットとデータローダーを準備する。
+        既存のデータセットをラップし、教師モデルのロジットを動的に付与するデータローダーを準備する。
         """
-        class _DistillationTextDataset(Dataset):
-            def __init__(self, tokenizer: PreTrainedTokenizerBase, texts: List[str], max_length: int, teacher_model: nn.Module, device: str):
-                self.tokenizer = tokenizer
-                self.texts = texts
-                self.max_length = max_length
+        class _DistillationWrapperDataset(Dataset):
+            def __init__(self, original_dataset: Dataset, teacher_model: nn.Module, device: str):
+                self.original_dataset = original_dataset
                 self.teacher_model = teacher_model
                 self.device = device
-                self.cache: Dict[int, Dict[str, torch.Tensor]] = {}
 
             def __len__(self) -> int:
-                return len(self.texts)
+                return len(self.original_dataset)
 
-            def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-                if idx in self.cache:
-                    return self.cache[idx]
-
-                text = self.texts[idx]
-                tokenized = self.tokenizer(
-                    text,
-                    padding='max_length',
-                    truncation=True,
-                    max_length=self.max_length,
-                    return_tensors='pt'
-                )
-                input_ids = tokenized['input_ids'].squeeze(0)
+            @torch.no_grad()
+            def __getitem__(self, idx: int) -> Dict[str, Any]:
+                item = self.original_dataset[idx]
                 
-                # データセット側で正しい入力とターゲットのペアを作成する
-                student_input = input_ids[:-1]
-                student_target = input_ids[1:]
-                
-                with torch.no_grad():
-                    # 教師モデルの推論は入力全体で行う
-                    teacher_output = self.teacher_model(input_ids.unsqueeze(0).to(self.device))
-                    teacher_logits_full = teacher_output.logits if hasattr(teacher_output, 'logits') else teacher_output
-                    teacher_logits_full = teacher_logits_full.squeeze(0).cpu()
-                    # 生徒の入力に対応する部分だけを切り出す
-                    teacher_logits = teacher_logits_full[:-1]
-                
-                # attention_maskも同様に調整
-                attention_mask = tokenized['attention_mask'].squeeze(0)[:-1]
+                # collate_fnでバッチ化されることを想定し、辞書形式で返す
+                # 'input_images' or 'input_ids'
+                inputs = item[0].unsqueeze(0).to(self.device)
+                teacher_output = self.teacher_model(inputs)
+                teacher_logits = (teacher_output.logits if hasattr(teacher_output, 'logits') else teacher_output).squeeze(0).cpu()
 
-                result = {
-                    'input_ids': student_input,
-                    'attention_mask': attention_mask,
-                    'targets': student_target,
-                    'teacher_logits': teacher_logits
-                }
-                self.cache[idx] = result
-                return result
+                return {"inputs": item[0], "labels": item[1], "teacher_logits": teacher_logits}
 
-        dataset = _DistillationTextDataset(self.tokenizer, texts, max_length, self.teacher_model, self.device)
+        train_wrapper = _DistillationWrapperDataset(train_dataset, self.teacher_model, self.device)
+        val_wrapper = _DistillationWrapperDataset(val_dataset, self.teacher_model, self.device)
         
-        # 訓練用と検証用にデータを分割
-        val_size = int(len(dataset) * validation_split)
-        train_size = len(dataset) - val_size
-        train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-
-        def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-            input_ids = torch.stack([item['input_ids'] for item in batch])
-            attention_mask = torch.stack([item['attention_mask'] for item in batch])
-            targets = torch.stack([item['targets'] for item in batch])
+        def distillation_collate_fn(batch: List[Dict[str, Any]]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            inputs = torch.stack([item['inputs'] for item in batch])
+            labels = torch.tensor([item['labels'] for item in batch], dtype=torch.long)
             teacher_logits = torch.stack([item['teacher_logits'] for item in batch])
-            return input_ids, attention_mask, targets, teacher_logits
+            return inputs, labels, teacher_logits
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, collate_fn=collate_fn)
+        train_loader = DataLoader(train_wrapper, batch_size=batch_size, collate_fn=distillation_collate_fn, shuffle=True)
+        val_loader = DataLoader(val_wrapper, batch_size=batch_size, collate_fn=distillation_collate_fn)
 
         return train_loader, val_loader
 
@@ -219,20 +192,8 @@ class KnowledgeDistillationManager:
             print("❌ No text found in the provided data file. Aborting.")
             return None
 
-        max_len = student_config.get("time_steps", 128) if student_config and isinstance(student_config, dict) else 128
-        batch_size = 4
-        train_loader, val_loader = self.prepare_dataset(texts, max_length=max_len, batch_size=batch_size)
-        
-        # 学習エポック数を30から50に増やし、学習精度を向上させる
-        new_model_info = await self.run_distillation(
-            train_loader=train_loader,
-            val_loader=val_loader,
-            epochs=50,
-            model_id=task_description,
-            task_description=f"Expert for {task_description}",
-            student_config=student_config
-        )
-        return new_model_info
+        # This part is now text-specific and needs adaptation for generic datasets
+        raise NotImplementedError("run_on_demand_pipeline for text needs to be refactored to use the new prepare_dataset method.")
 
     async def evaluate_model(self, dataloader: DataLoader) -> Dict[str, float]:
         """
@@ -241,7 +202,7 @@ class KnowledgeDistillationManager:
         model_to_eval = self.distillation_trainer.model
         model_to_eval.eval()
         total_spikes = 0.0
-        total_valid_tokens = 0
+        total_samples = 0
         num_neurons = 0
         if isinstance(model_to_eval, SNNCore):
             num_neurons = sum(p.numel() for p in model_to_eval.model.parameters())
@@ -251,9 +212,8 @@ class KnowledgeDistillationManager:
 
         progress_bar = tqdm(dataloader, desc="Evaluating Distilled Model")
         for batch in progress_bar:
-            inputs, attention_mask, _, _ = batch
+            inputs, labels, _ = batch
             inputs = inputs.to(self.device)
-            attention_mask = attention_mask.to(self.device)
 
             with torch.no_grad():
                 outputs = model_to_eval(inputs, return_spikes=True)
@@ -262,17 +222,16 @@ class KnowledgeDistillationManager:
                 else:
                     avg_batch_spikes = torch.zeros((), device=inputs.device)
 
-            num_tokens_in_batch = attention_mask.sum().item()
-            total_spikes += avg_batch_spikes.item() * num_tokens_in_batch
-            total_valid_tokens += num_tokens_in_batch
+            total_spikes += avg_batch_spikes.item() * inputs.size(0)
+            total_samples += inputs.size(0)
 
-        avg_spikes_per_sample = total_spikes / total_valid_tokens if total_valid_tokens > 0 else 0.0
+        avg_spikes_per_sample = total_spikes / total_samples if total_samples > 0 else 0.0
 
-        perplexity = calculate_perplexity(model_to_eval, dataloader, self.device)
+        # Perplexity is not suitable for classification, so we skip it.
+        # Accuracy is calculated within the trainer's evaluate method.
         energy = calculate_energy_consumption(avg_spikes_per_sample, num_neurons=num_neurons)
 
         return {
-            "perplexity": perplexity,
             "avg_spikes_per_sample": avg_spikes_per_sample,
             "estimated_energy_consumption": energy
         }
