@@ -2,7 +2,7 @@
 #
 # Title: SNN Core Models
 # Description: This file defines the core SNN architectures for the project.
-# (修正): 根本的な構文エラーを解消するため、ヘッダーコメントを再生成しました。
+# 改善(snn_4_ann_parity_plan): ANN-SNN変換・比較実験のためのSpikingCNNモデルを追加。
 
 import torch
 import torch.nn as nn
@@ -333,6 +333,71 @@ class HybridCnnSnnModel(BaseModel):
         
         return logits, avg_spikes, mem
 
+class SpikingCNN(BaseModel):
+    """
+    画像分類用のシンプルなSpiking CNN。SimpleCNNベースラインに対応。
+    Architecture: Conv -> LIF -> AvgPool -> Conv -> LIF -> AvgPool -> FC -> LIF -> FC
+    """
+    def __init__(self, vocab_size: int, time_steps: int, neuron_config: Dict[str, Any], **kwargs: Any):
+        super().__init__()
+        num_classes = vocab_size
+        self.time_steps = time_steps
+        
+        neuron_type = neuron_config.get("type", "lif")
+        neuron_params = neuron_config.copy()
+        neuron_params.pop('type', None)
+        neuron_class = AdaptiveLIFNeuron if neuron_type == 'lif' else IzhikevichNeuron
+        
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 16, kernel_size=3, padding=1),
+            neuron_class(features=16, **neuron_params),
+            nn.AvgPool2d(2),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            neuron_class(features=32, **neuron_params),
+            nn.AvgPool2d(2),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(32 * 56 * 56, 128),
+            neuron_class(features=128, **neuron_params),
+            nn.Linear(128, num_classes)
+        )
+        self._init_weights()
+
+    def forward(self, input_images: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        B, C, H, W = input_images.shape
+        device = input_images.device
+        functional.reset_net(self)
+        
+        output_voltages = []
+        for _ in range(self.time_steps):
+            x = input_images
+            
+            # features part
+            for layer in self.features:
+                if isinstance(layer, (AdaptiveLIFNeuron, IzhikevichNeuron)):
+                    B_c, C_c, H_c, W_c = x.shape
+                    x, _ = layer(x.permute(0, 2, 3, 1).reshape(-1, C_c))
+                    x = x.view(B_c, H_c, W_c, C_c).permute(0, 3, 1, 2)
+                else:
+                    x = layer(x)
+
+            # classifier part
+            for layer in self.classifier:
+                x = layer(x)
+
+            output_voltages.append(x)
+        
+        final_logits = torch.stack(output_voltages, dim=0).mean(dim=0)
+        
+        total_spikes = self.get_total_spikes()
+        avg_spikes_val = total_spikes / (B * self.time_steps) if return_spikes else 0.0
+        avg_spikes = torch.tensor(avg_spikes_val, device=device)
+        mem = torch.tensor(0.0, device=device)
+
+        return final_logits, avg_spikes, mem
+
+
 class SNNCore(nn.Module):
     def __init__(self, config: DictConfig, vocab_size: int):
         super(SNNCore, self).__init__()
@@ -352,12 +417,13 @@ class SNNCore(nn.Module):
             "spiking_mamba": SpikingMamba,
             "spiking_hrm": SpikingHRM,
             "simple": SimpleSNN,
-            "hybrid_cnn_snn": HybridCnnSnnModel
+            "hybrid_cnn_snn": HybridCnnSnnModel,
+            "spiking_cnn": SpikingCNN,
         }
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
         
-        if model_type in ["hybrid_cnn_snn"]:
+        if model_type in ["hybrid_cnn_snn", "spiking_cnn"]:
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
         else:
             self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
