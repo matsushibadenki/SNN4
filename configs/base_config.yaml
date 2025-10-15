@@ -49,7 +49,7 @@ training:
       sparsity_reg_weight: 0.00001
       mem_reg_weight: 0.0
       temporal_compression_weight: 0.001
-      sparsity_threshold_reg_weight: 0.0001 # 追加
+      sparsity_threshold_reg_weight: 0.0001
       ewc_weight: 400.0 
     distillation:
       teacher_model: "gpt2"
@@ -60,7 +60,7 @@ training:
         sparsity_reg_weight: 0.00001
         mem_reg_weight: 0.0
         temporal_compression_weight: 0.001
-        sparsity_threshold_reg_weight: 0.0001 # 追加
+        sparsity_threshold_reg_weight: 0.0001
         temperature: 2.0
 
   biologically_plausible:
