@@ -5,6 +5,7 @@
 # snn_4_ann_parity_plan.mdのStep 3.7に基づき、モデルのスパース化と効率化のため、
 # 構造的プルーニング機能を提供する。
 # この実装では、最も基本的な手法の一つであるMagnitude Pruning（大きさによる枝刈り）を導入する。
+# 修正(snn_4_ann_parity_plan): デバッグ用のログ出力を追加。
 
 import torch.nn as nn
 import torch.nn.utils.prune as prune
@@ -25,8 +26,6 @@ def apply_magnitude_pruning(model: nn.Module, amount: float) -> nn.Module:
         print(f"⚠️ プルーニング量が無効です ({amount})。0.0から1.0の間の値を指定してください。プルーニングをスキップします。")
         return model
 
-    print(f" prune.global_unstructuredを呼び出す直前")
-
     parameters_to_prune: List[Tuple[nn.Module, str]] = []
     for module in model.modules():
         if isinstance(module, (nn.Linear, nn.Conv1d, nn.Conv2d)):
@@ -38,6 +37,8 @@ def apply_magnitude_pruning(model: nn.Module, amount: float) -> nn.Module:
 
     print(f"✅ {len(parameters_to_prune)}個のモジュールを対象に、{amount:.2%}のグローバルプルーニングを適用します...")
     
+    # デバッグ用のログ出力
+    print("   - Calling prune.global_unstructured...")
     prune.global_unstructured(
         parameters_to_prune,
         pruning_method=prune.L1Unstructured,
