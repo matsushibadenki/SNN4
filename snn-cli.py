@@ -4,10 +4,6 @@
 #   学習、推論、自己進化、人工脳シミュレーションなど、プロジェクトの全機能を
 #   単一のインターフェースから制御するためのコマンドラインツール。
 #   Typerライブラリを使用し、サブコマンド形式で機能を提供する。
-# 改善(snn_4_ann_parity_plan):
-#   - ベンチマーク実行機能 (`benchmark run`) を追加。
-#   - 継続学習実験機能 (`benchmark continual`) を追加。
-
 import typer
 from typing import Optional, List
 import subprocess
