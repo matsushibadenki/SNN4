@@ -3,6 +3,7 @@
 # Title: SNN Core Models
 # Description: This file defines the core SNN architectures for the project.
 # 改善(snn_4_ann_parity_plan): ANN-SNN変換・比較実験のためのSpikingCNNモデルを追加。
+# 改善(v2): snn_4_ann_parity_plan Step 2.5 に基づき、Hybrid CNN-SNNモデルを追加。
 
 import torch
 import torch.nn as nn
@@ -423,10 +424,13 @@ class SNNCore(nn.Module):
         if model_type not in model_map:
             raise ValueError(f"Unknown model type: {model_type}")
         
-        if model_type in ["hybrid_cnn_snn", "spiking_cnn"]:
-            self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
-        else:
-            self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
+        # Pass all params to the model constructor
+        self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
+
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
-        return self.model(*args, **kwargs)
+        # Pass input_images for image models
+        if self.config.get("architecture_type") in ["hybrid_cnn_snn", "spiking_cnn"]:
+            return self.model(input_images=args[0], **kwargs)
+        else:
+            return self.model(input_ids=args[0], **kwargs)
