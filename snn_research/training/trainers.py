@@ -1,15 +1,8 @@
 # ファイルパス: snn_research/training/trainers.py
 # (更新)
-# 修正点: mypyエラー [call-arg] を解消するため、DistillationTrainer内の
-#         未使用かつ型推論を混乱させていた train メソッドを削除。
-# 修正点(v2): PyTorchのUserWarningを解消するため、train_epochメソッド内の
-#            scheduler.step()の呼び出し方を修正。
-# 改善点(v3): モデルの内部状態を可視化するため、ニューロンダイナミクスの
-#            記録・描画機能を追加。
-# 修正点(v4): mypyエラー[union-attr]および[operator]を解消するため、
-#            可視化ロジックをPyTorchのフックを用いた安全な実装に変更。
-# 修正点(v5): EWC実装時のコピー＆ペーストミスに起因するmypyエラーを修正。
+# (省略...)
 # 修正点(v6): 継続学習(EWC)のためのFisher行列計算・保存機能を追加。
+# 改善点(snn_4_ann_parity_plan): EWCデータのロード機能を追加。
 
 import torch
 import torch.nn as nn
@@ -65,6 +58,20 @@ class BreakthroughTrainer:
         self.enable_visualization = enable_visualization
         if self.enable_visualization and self.rank in [-1, 0]:
             self.recorder = NeuronDynamicsRecorder(max_timesteps=100)
+    
+    def load_ewc_data(self, path: str):
+        """事前計算されたFisher行列と最適パラメータをEWCのためにロードする。"""
+        if not os.path.exists(path):
+            print(f"⚠️ EWCデータファイルが見つかりません: {path}。EWCなしで学習を開始します。")
+            return
+
+        ewc_data = torch.load(path, map_location=self.device)
+        if isinstance(self.criterion, CombinedLoss):
+            self.criterion.fisher_matrix = ewc_data['fisher_matrix']
+            self.criterion.optimal_params = ewc_data['optimal_params']
+            print(f"✅ EWCデータを '{path}' からロードしました。")
+        else:
+            print("⚠️ 警告: EWCデータはロードされましたが、現在の損失関数はCombinedLossではありません。EWCは適用されません。")
 
 
     def _run_step(self, batch: Tuple[torch.Tensor, ...], is_train: bool) -> Dict[str, Any]:
