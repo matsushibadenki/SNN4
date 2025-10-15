@@ -9,6 +9,7 @@
 # - 修正(mypy): [arg-type]エラーを解消するため、castを使用して型を明示。
 # - 改善点(snn_4_ann_parity_plan): EWCデータのロード機能を追加。
 # - 修正(v2): QATの適用タイミングを学習開始前に修正。
+# - 改善点(v3): snnTorchバックエンドの切り替え機能を追加。
 
 import argparse
 import os
@@ -105,9 +106,10 @@ def train(
         if is_distributed and paradigm != "gradient_based":
             raise NotImplementedError(f"{paradigm} learning does not support DDP yet.")
         
-        snn_model: nn.Module = container.snn_model()
+        # --- ▼ backend対応 ▼ ---
+        snn_model: nn.Module = container.snn_model(backend=args.backend)
+        # --- ▲ backend対応 ▲ ---
 
-        # --- ▼ QAT修正 ▼ ---
         # QATは学習ループの前に適用する
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
             if is_distributed:
@@ -117,7 +119,6 @@ def train(
             print("✅ 量子化認識学習（QAT）のためにモデルを準備しました。")
         
         snn_model.to(device)
-        # --- ▲ QAT修正 ▲ ---
 
         if is_distributed:
             snn_model = DDP(snn_model, device_ids=[rank], find_unused_parameters=True)
@@ -131,7 +132,7 @@ def train(
             trainer_provider = container.distillation_trainer if is_distillation else container.standard_trainer
             trainer = trainer_provider(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
         elif paradigm == "self_supervised":
-            optimizer = container.optimizer(params=snn_model.parameters()) # Assuming same optimizer config
+            optimizer = container.optimizer(params=snn_model.parameters())
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['self_supervised']['use_scheduler'] else None
             trainer = container.self_supervised_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
         elif paradigm == "physics_informed":
@@ -139,7 +140,7 @@ def train(
             scheduler = container.pi_scheduler(optimizer=optimizer) if config['training']['physics_informed']['use_scheduler'] else None
             trainer = container.physics_informed_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
         else: # probabilistic_ensemble
-            optimizer = container.optimizer(params=snn_model.parameters()) # Assuming same optimizer config
+            optimizer = container.optimizer(params=snn_model.parameters())
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['probabilistic_ensemble']['use_scheduler'] else None
             trainer = container.probabilistic_ensemble_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
 
@@ -172,7 +173,6 @@ def train(
         final_model = cast(nn.Module, final_model_unwrapped)
         
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
-            # 学習済みのQATモデルを最終的な量子化モデルに変換
             final_model.to('cpu')
             quantized_model = convert_to_quantized_model(final_model)
             quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
@@ -181,8 +181,6 @@ def train(
         
         if config.get('training', {}).get('pruning', {}).get('enabled', False):
             pruning_amount = config['training']['pruning'].get('amount', 0.2)
-            # 量子化が有効な場合は、量子化されたモデルをプルーニングする（またはその逆）
-            # ここでは、元の浮動小数点モデルをプルーニング
             pruned_model = apply_magnitude_pruning(final_model, amount=pruning_amount)
             pruned_path = os.path.join(config['training']['log_dir'], 'pruned_best_model.pth')
             torch.save(pruned_model.state_dict(), pruned_path)
@@ -220,6 +218,7 @@ def main():
     parser.add_argument("--load_ewc_data", type=str, help="事前計算されたEWCのFisher行列とパラメータのパス")
     parser.add_argument("--use_astrocyte", action="store_true", help="アストロサイトネットワークを有効にする (gradient_based系のみ)")
     parser.add_argument("--paradigm", type=str, help="学習パラダイムを上書き (例: gradient_based, bio-causal-sparse, bio-particle-filter)")
+    parser.add_argument("--backend", type=str, default="spikingjelly", choices=["spikingjelly", "snntorch"], help="SNNシミュレーションバックエンドライブラリ")
     args = parser.parse_args()
 
     container.config.from_yaml(args.config)
@@ -231,7 +230,7 @@ def main():
         for override in args.override_config:
             keys, value_str = override.split('=', 1)
             try:
-                value = int(value_str)
+                value: Any = int(value_str)
             except ValueError:
                 try:
                     value = float(value_str)
@@ -243,7 +242,7 @@ def main():
                     else:
                         value = value_str
             
-            config_dict = {}
+            config_dict: Dict[str, Any] = {}
             temp_dict = config_dict
             key_parts = keys.split('.')
             for i, part in enumerate(key_parts):
