@@ -23,10 +23,9 @@ training:
     enabled: false
     backend: 'fbgemm'
     
-  # snn_4_ann_parity_planに基づく追加
   pruning:
     enabled: false
-    amount: 0.2 # 20%の重みをプルーニング
+    amount: 0.2
 
   meta_cognition:
     enabled: true
@@ -50,6 +49,7 @@ training:
       sparsity_reg_weight: 0.00001
       mem_reg_weight: 0.0
       temporal_compression_weight: 0.001
+      sparsity_threshold_reg_weight: 0.0001 # 追加
       ewc_weight: 400.0 
     distillation:
       teacher_model: "gpt2"
@@ -60,6 +60,7 @@ training:
         sparsity_reg_weight: 0.00001
         mem_reg_weight: 0.0
         temporal_compression_weight: 0.001
+        sparsity_threshold_reg_weight: 0.0001 # 追加
         temperature: 2.0
 
   biologically_plausible:
