@@ -12,7 +12,7 @@
 import argparse
 import asyncio
 import torch
-import torchvision.models as models
+import torchvision.models as models  # type: ignore
 from torch.utils.data import DataLoader
 
 from app.containers import TrainingContainer
