@@ -4,6 +4,7 @@
 #
 # 修正(mypy): [annotation-unchecked] noteを解消するため、型ヒントを追加。
 # 修正(mypy): [name-defined]エラーを解消するため、Unionをインポート。
+# 修正(mypy): [union-attr]エラーを解消するため、trainerの種類に応じて処理を分岐。
 
 import argparse
 import os
@@ -42,59 +43,19 @@ def train(
     
     paradigm = config['training']['paradigm']
 
-    # 生物学的学習パラダイム以外はデータセットの準備が必要
-    if not paradigm.startswith("bio-"):
-        is_distillation = paradigm == "gradient_based" and config['training']['gradient_based']['type'] == "distillation"
-
-        wikitext_path = "data/wikitext-103_train.jsonl"
-        if os.path.exists(wikitext_path):
-            print(f"✅ 大規模データセット '{wikitext_path}' を発見。学習に使用します。")
-            data_path = wikitext_path
-        else:
-            data_path = args.data_path or config['data']['path']
-            print(f"⚠️ 大規模データセットが見つからないため、'{data_path}' を使用します。")
-            print(f"   より性能を向上させるには、`python scripts/data_preparation.py` を実行してください。")
-        
-        DatasetClass = get_dataset_class(DataFormat(config['data']['format']))
-        dataset: SNNBaseDataset
-        if is_distillation:
-            dataset = DistillationDataset(
-                file_path=os.path.join(data_path, "distillation_data.jsonl"), data_dir=data_path,
-                tokenizer=tokenizer, max_seq_len=config['model']['time_steps']
-            )
-        else:
-            dataset = DatasetClass(
-                file_path=data_path, tokenizer=tokenizer, max_seq_len=config['model']['time_steps']
-            )
-            
-        train_size = int((1.0 - config['data']['split_ratio']) * len(dataset))
-        val_size = len(dataset) - train_size
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-
-        train_sampler: Optional[DistributedSampler] = DistributedSampler(train_dataset) if is_distributed else None
-        train_loader = DataLoader(
-            train_dataset, batch_size=config['training']['batch_size'], shuffle=(train_sampler is None),
-            sampler=train_sampler, collate_fn=collate_fn(tokenizer, is_distillation)
-        )
-        val_loader = DataLoader(
-            val_dataset, batch_size=config['training']['batch_size'], shuffle=False,
-            collate_fn=collate_fn(tokenizer, is_distillation)
-        )
-
     print(f"🚀 学習パラダイム '{paradigm}' で学習を開始します...")
-    
-    trainer: Union[BreakthroughTrainer, BioRLTrainer, ParticleFilterTrainer]
 
     if paradigm.startswith("bio-"):
+        # --- 生物学的学習パラダイムの実行 ---
         if paradigm == "bio-causal-sparse":
             print("🧬 適応的因果スパース化を有効にした強化学習を開始します。")
             container.config.training.biologically_plausible.adaptive_causal_sparsification.enabled.from_value(True)
-            bio_trainer = container.bio_rl_trainer()
+            bio_trainer: BioRLTrainer = container.bio_rl_trainer()
             bio_trainer.train(num_episodes=config['training']['epochs'])
         elif paradigm == "bio-particle-filter":
             print("🌪️ パーティクルフィルタによる確率的学習を開始します (CPUベース)。")
             container.config.training.biologically_plausible.particle_filter.enabled.from_value(True)
-            particle_trainer = container.particle_filter_trainer()
+            particle_trainer: ParticleFilterTrainer = container.particle_filter_trainer()
             dummy_data = torch.rand(1, 10, device=device)
             dummy_targets = torch.rand(1, 2, device=device)
             for epoch in range(config['training']['epochs']):
@@ -104,18 +65,38 @@ def train(
             raise ValueError(f"不明な生物学的学習パラダイム: {paradigm}")
 
     elif paradigm in ["gradient_based", "self_supervised", "physics_informed", "probabilistic_ensemble"]:
+        # --- 勾配ベース学習パラダイムの実行 ---
         if is_distributed and paradigm != "gradient_based":
             raise NotImplementedError(f"{paradigm} learning does not support DDP yet.")
+
+        is_distillation = paradigm == "gradient_based" and config['training']['gradient_based']['type'] == "distillation"
         
+        # データセットの準備
+        wikitext_path = "data/wikitext-103_train.jsonl"
+        if os.path.exists(wikitext_path):
+            data_path = wikitext_path
+        else:
+            data_path = args.data_path or config['data']['path']
+        
+        DatasetClass = get_dataset_class(DataFormat(config['data']['format']))
+        dataset: SNNBaseDataset
+        if is_distillation:
+            dataset = DistillationDataset(file_path=os.path.join(data_path, "distillation_data.jsonl"), data_dir=data_path, tokenizer=tokenizer, max_seq_len=config['model']['time_steps'])
+        else:
+            dataset = DatasetClass(file_path=data_path, tokenizer=tokenizer, max_seq_len=config['model']['time_steps'])
+            
+        train_size = int((1.0 - config['data']['split_ratio']) * len(dataset))
+        val_size = len(dataset) - train_size
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+        train_sampler: Optional[DistributedSampler] = DistributedSampler(train_dataset) if is_distributed else None
+        train_loader = DataLoader(train_dataset, batch_size=config['training']['batch_size'], shuffle=(train_sampler is None), sampler=train_sampler, collate_fn=collate_fn(tokenizer, is_distillation))
+        val_loader = DataLoader(val_dataset, batch_size=config['training']['batch_size'], shuffle=False, collate_fn=collate_fn(tokenizer, is_distillation))
+
         snn_model: nn.Module = container.snn_model(backend=args.backend)
 
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
-            if is_distributed:
-                print("⚠️ 警告: 量子化認識学習(QAT)と分散学習(DDP)の併用は実験的です。")
-            snn_model.to('cpu')
-            snn_model = apply_qat(snn_model)
-            print("✅ 量子化認識学習（QAT）のためにモデルを準備しました。")
-        
+            snn_model = apply_qat(snn_model.to('cpu'))
         snn_model.to(device)
 
         if is_distributed:
@@ -124,27 +105,30 @@ def train(
         astrocyte = container.astrocyte_network(snn_model=snn_model) if args.use_astrocyte else None
         
         trainer_provider: Callable[..., BreakthroughTrainer]
+        optimizer: torch.optim.Optimizer
+        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler]
+
         if paradigm == "gradient_based":
             optimizer = container.optimizer(params=snn_model.parameters())
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['gradient_based']['use_scheduler'] else None
             trainer_provider = container.distillation_trainer if is_distillation else container.standard_trainer
-            trainer = trainer_provider(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
         elif paradigm == "self_supervised":
             optimizer = container.optimizer(params=snn_model.parameters())
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['self_supervised']['use_scheduler'] else None
-            trainer = container.self_supervised_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
+            trainer_provider = container.self_supervised_trainer
         elif paradigm == "physics_informed":
             optimizer = container.pi_optimizer(params=snn_model.parameters())
             scheduler = container.pi_scheduler(optimizer=optimizer) if config['training']['physics_informed']['use_scheduler'] else None
-            trainer = container.physics_informed_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
+            trainer_provider = container.physics_informed_trainer
         else: # probabilistic_ensemble
             optimizer = container.optimizer(params=snn_model.parameters())
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['probabilistic_ensemble']['use_scheduler'] else None
-            trainer = container.probabilistic_ensemble_trainer(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
+            trainer_provider = container.probabilistic_ensemble_trainer
+
+        trainer: BreakthroughTrainer = trainer_provider(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
 
         if args.load_ewc_data:
-            if isinstance(trainer, BreakthroughTrainer):
-                trainer.load_ewc_data(args.load_ewc_data)
+            trainer.load_ewc_data(args.load_ewc_data)
 
         start_epoch = trainer.load_checkpoint(args.resume_path) if args.resume_path else 0
         for epoch in range(start_epoch, config['training']['epochs']):
@@ -154,35 +138,25 @@ def train(
                 val_metrics = trainer.evaluate(val_loader, epoch)
                 if epoch % config['training']['log_interval'] == 0:
                     checkpoint_path = os.path.join(config['training']['log_dir'], f"checkpoint_epoch_{epoch}.pth")
-                    trainer.save_checkpoint(
-                        path=checkpoint_path, epoch=epoch, metric_value=val_metrics.get('total', float('inf')),
-                        tokenizer_name=config['data']['tokenizer_name'], config=config['model']
-                    )
+                    trainer.save_checkpoint(path=checkpoint_path, epoch=epoch, metric_value=val_metrics.get('total', float('inf')), tokenizer_name=config['data']['tokenizer_name'], config=config['model'])
         
         if rank in [-1, 0] and args.task_name and config['training']['gradient_based']['loss']['ewc_weight'] > 0:
-            if isinstance(trainer, BreakthroughTrainer):
-                trainer._compute_ewc_fisher_matrix(train_loader, args.task_name)
+            trainer._compute_ewc_fisher_matrix(train_loader, args.task_name)
+            
+        # 最終モデルの処理 (量子化、プルーニング)
+        if rank in [-1, 0]:
+            final_model = trainer.model.module if is_distributed else trainer.model
+            if config.get('training', {}).get('quantization', {}).get('enabled', False):
+                quantized_model = convert_to_quantized_model(final_model.to('cpu'))
+                quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
+                torch.save(quantized_model.state_dict(), quantized_path)
+            if config.get('training', {}).get('pruning', {}).get('enabled', False):
+                pruned_model = apply_magnitude_pruning(final_model, amount=config['training']['pruning'].get('amount', 0.2))
+                pruned_path = os.path.join(config['training']['log_dir'], 'pruned_best_model.pth')
+                torch.save(pruned_model.state_dict(), pruned_path)
 
     else:
-        raise ValueError(f"Unknown or unsupported training paradigm for this script: '{paradigm}'.")
-
-    if rank in [-1, 0] and 'trainer' in locals():
-        final_model_unwrapped = trainer.model.module if is_distributed else trainer.model
-        final_model = cast(nn.Module, final_model_unwrapped)
-        
-        if config.get('training', {}).get('quantization', {}).get('enabled', False):
-            final_model.to('cpu')
-            quantized_model = convert_to_quantized_model(final_model)
-            quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
-            torch.save(quantized_model.state_dict(), quantized_path)
-            print(f"✅ 量子化済みモデルを '{quantized_path}' に保存しました。")
-        
-        if config.get('training', {}).get('pruning', {}).get('enabled', False):
-            pruning_amount = config['training']['pruning'].get('amount', 0.2)
-            pruned_model = apply_magnitude_pruning(final_model, amount=pruning_amount)
-            pruned_path = os.path.join(config['training']['log_dir'], 'pruned_best_model.pth')
-            torch.save(pruned_model.state_dict(), pruned_path)
-            print(f"✅ プルーニング済みモデルを '{pruned_path}' に保存しました。")
+        raise ValueError(f"Unknown training paradigm: '{paradigm}'.")
 
     print("✅ 学習が完了しました。")
 
