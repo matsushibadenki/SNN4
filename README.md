@@ -74,7 +74,7 @@ graph TD
     Training -->|"学習則を利用"| Rules
 ```
 
-## **4\. システムの実行方法**
+## **4\. クイックスタート**
 
 ### **ステップ1: 環境設定**
 
@@ -82,51 +82,114 @@ graph TD
 
 pip install \-r requirements.txt
 
-### **ステップ2: システム健全性チェック（推奨）**
+### **ステップ2: システム健全性チェック**
 
 プロジェクト全体のユニットテストおよび統合テストを実行し、すべてのコンポーネントが正しく動作することを確認します。
 
 pytest \-v
 
-### **ステップ3: ANN vs SNN 性能比較**
+### **ステップ3: 基本的な学習の実行**
 
-snn\_4\_ann\_parity\_plan.mdに基づき、標準的なベンチマークでANNとSNNの性能を直接比較・評価します。
+統合CLIツール snn-cli.py を使って、最小構成のモデル (micro.yaml) で学習パイプラインが動作することを確認します。
 
-#### **ワークフロー1: 直接学習による性能比較**
+python snn-cli.py gradient-train \\  
+    \--model-config configs/models/micro.yaml \\  
+    \--data-path data/smoke\_test\_data.jsonl \\  
+    \--override\_config "training.epochs=3"
 
-**A) 画像分類タスク (CIFAR-10)**
+## **5\. 詳細な利用方法**
 
-snn-cli benchmark run \--experiment cifar10\_comparison \--epochs 5 \--tag "direct\_learning\_cnn"
+プロジェクトの全機能は snn-cli.py からアクセスできます。以下に主要なワークフローを示します。
 
-**B) 自然言語処理タスク (SST-2 感情分析)**
+### **5.1 基本的な学習と推論**
 
-snn-cli benchmark run \--experiment sst2\_comparison \--epochs 3 \--tag "direct\_learning\_transformer"
+#### **学習**
 
-実験完了後、結果はbenchmarks/ディレクトリにリーダーボード形式で自動的に追記・保存されます。
+gradient-train コマンドで、指定した設定に基づきSNNモデルを直接学習させます。
 
-#### **ワークフロー2: ANN-SNN変換による性能評価**
+\# 中規模モデル(medium.yaml)を5エポック学習  
+python snn-cli.py gradient-train \\  
+    \--model-config configs/models/medium.yaml \\  
+    \--data-path data/sample\_data.jsonl \\  
+    \--override\_config "training.epochs=5"
 
-1. まず、ベースとなるANNモデルを訓練します。  
-   (この例では、訓練済みのANNモデル ann\_model.pth が存在すると仮定します。)  
-2. **次に、学習済みのANNの重みをSNNに変換します。**  
-   snn-cli convert ann2snn-cnn ann\_model.pth converted\_snn\_model.pth
+学習ログとモデルのチェックポイントは runs/snn\_experiment ディレクトリ（または設定ファイルで指定した log\_dir）に保存されます。
 
-3. 最後に、変換されたSNNモデルの性能を評価します。  
-   (このステップは、run\_benchmark\_suite.pyを改造して評価のみを行うモードを追加することで実現できます。)
+#### **推論（対話UI）**
 
-### **ステップ4: 本格実行 \- 大規模学習と対話**
+ui コマンドでGradioベースのWeb UIを起動し、学習済みモデルと対話します。
 
-**目的:** 大規模データセットでAIを本格的に学習させ、意味のある応答を生成できるようにします。
+\# 先ほど学習したモデルを読み込んでUIを起動  
+python snn-cli.py ui \--model-config configs/models/medium.yaml
 
-#### **4-1: 大規模データセットの準備（初回のみ）**
+### **5.2 高忠実度ANN-SNN変換**
 
-python scripts/data\_preparation.py
+本プロジェクトの最重要機能の一つです。既存の学習済みANN資産を活用し、高性能なSNNを生成します。
 
-#### **4-2: 本格的な学習の実行**
+#### **A) CNNモデルの変換 (例: ResNet)**
 
-\# 推奨：最強エンジン（Ultraモデル）の学習  
-snn-cli train-ultra \--override\_config "training.epochs=50"
+画像認識で広く使われるCNN（畳み込みニューラルネットワーク）をSNNに変換します。このプロセスは、ANN-SNN変換における精度低下の主要因である\*\*バッチ正規化（BatchNorm）\*\*の問題を解決するため、**BatchNorm Folding**という重要なステップを内蔵しています。
 
-#### **4-3: 学習済みモデルとの対話**
+**ワークフロー:**
 
-snn-cli ui start \--model\_config configs/models/ultra.yaml  
+1. **ANNモデルの学習（ユーザー側で実施）**  
+   * PyTorchなどでSimpleCNN（snn\_research/benchmark/ann\_baseline.pyを参照）やResNetなどのモデルを学習させ、.pthファイルとして保存します。  
+2. **高忠実度変換の実行**  
+   * convert cnn-convert コマンドを使用し、学習済みANNモデルを指定します。このコマンドは内部で自動的にBatchNorm層を畳み込み層に統合し、安全な重みコピーと閾値キャリブレーションを実行します。
+
+\# (例) 学習済みのann\_cnn.pthを、snnの設定(cifar10\_spikingcnn\_config.yaml)に基づき変換  
+python snn-cli.py convert cnn-convert \\  
+    \--ann-model-path path/to/your/ann\_cnn.pth \\  
+    \--snn-model-config configs/cifar10\_spikingcnn\_config.yaml \\  
+    \--output-snn-path runs/converted/spiking\_cnn.pth
+
+#### **B) 大規模言語モデル(LLM)の変換 (実験的機能)**
+
+TransformerベースのLLMをSNNに変換します。
+
+**警告:** Transformerアーキテクチャ全体（特にSoftmaxやLayerNormを含む自己注意機構）を単純にスパイク化すると、深刻な性能低下を招く可能性があります。現実的なアプローチは、計算が複雑な部分をアナログのまま残す**ハイブリッドモデル**や、変換後に長時間の**代理勾配による微調整**を行うことです。
+
+llm-convert コマンドは、この変換プロセスの第一歩として、互換性のある層（主に線形層）の重みを安全にコピーし、活性化分布に基づいた**閾値キャリブレーション**を実行します。
+
+\# (例) Hugging Faceの 'gpt2' モデルを、SpikingTransformerの設定に基づき変換  
+python snn-cli.py convert llm-convert \\  
+    \--ann-model-path gpt2 \\  
+    \--snn-model-config configs/models/spiking\_transformer.yaml \\  
+    \--output-snn-path runs/converted/spiking\_gpt2.pth
+
+### **5.3 自律エージェントと認知アーキテクチャ**
+
+#### **オンデマンド学習**
+
+agent solve コマンドで、エージェントに未知のタスクを与えます。エージェントは自律的にWebで情報を収集し、知識蒸留によってタスク特化型の専門家SNNを生成します。
+
+\# 「最新のAI技術」についてWeb学習させ、専門家モデルを構築  
+python snn-cli.py agent solve \\  
+    \--task "最新のAI技術" \\  
+    \--unlabeled-data-path data/sample\_data.jsonl \\  
+    \--force-retrain
+
+#### **自己進化**
+
+agent evolve コマンドで、エージェントに自己評価と改善のサイクルを実行させます。エージェントは自身のアーキテクチャや学習パラメータ、さらには**学習パラダイム自体**を変更する提案を生成します。
+
+python snn-cli.py agent evolve \\  
+    \--task-description "高難度の文章分類" \\  
+    \--model-config configs/models/small.yaml \\  
+    \--training-config configs/base\_config.yaml
+
+#### **人工脳シミュレーション**
+
+brain コマンドで、統合された認知アーキテクチャ全体を動作させます。--loopフラグを付けると、対話形式でAIの「思考プロセス」を観察できます。
+
+\# 対話形式で人工脳を起動  
+python snn-cli.py brain \--loop
+
+### **5.4 パフォーマンス評価**
+
+benchmark run コマンドで、標準的なタスク（CIFAR-10, SST-2など）におけるSNNとANNの性能（精度、速度、エネルギー効率）を直接比較します。
+
+\# CIFAR-10でSNNとANNの比較ベンチマークを1エポック実行  
+python snn-cli.py benchmark run \\  
+    \--experiment cifar10\_comparison \\  
+    \--epochs 1  
