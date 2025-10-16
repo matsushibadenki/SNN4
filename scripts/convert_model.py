@@ -1,16 +1,19 @@
 # scripts/convert_model.py
+# (更新)
 # ANNモデルからSNNモデルへの変換・蒸留を実行するためのスクリプト
 #
 # 変更点:
 # - [改善] オンライン知識蒸留で、ダミーではなく指定された教師モデルをロードするように修正。
 # - [修正] 基本設定ファイル(base_config.yaml)を読み込むように修正し、Tokenizerの読み込みエラーを解消。
 # - [改善 v2] ann2snn_cnn.py の機能を統合し、CNNモデルの直接変換に対応。
+# - [改善 v3] LLM変換用の `--method llm-convert` を追加。
 
 import argparse
 import sys
 from pathlib import Path
 import torch
 from collections import OrderedDict
+from torch.utils.data import DataLoader, TensorDataset
 
 # プロジェクトルートをPythonパスに追加
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -24,7 +27,6 @@ from omegaconf import OmegaConf
 def convert_cnn_weights(ann_model_path: str, snn_config_path: str, output_path: str):
     """
     学習済みSimpleCNNの重みをSpikingCNNにコピーする。
-    (旧 scripts/ann2snn_cnn.py の機能)
     """
     print("--- ANN (SimpleCNN) to SNN (SpikingCNN) Weight Conversion ---")
     ann_model = SimpleCNN(num_classes=10)
@@ -60,22 +62,23 @@ def main():
         "--method",
         type=str,
         required=True,
-        choices=["convert", "distill", "cnn-convert"],
+        choices=["convert", "distill", "cnn-convert", "llm-convert"],
         help="実行する手法を選択:\n"
              " - convert: ANNの重みをSNNに直接コピーします。\n"
              " - distill: ANNを教師役としてSNNをオンラインで蒸留学習させます。\n"
-             " - cnn-convert: SimpleCNN(ANN)をSpikingCNN(SNN)に変換します。"
+             " - cnn-convert: SimpleCNN(ANN)をSpikingCNN(SNN)に変換します。\n"
+             " - llm-convert: Hugging FaceのLLMをSpikingTransformerに高忠実度変換します。"
     )
     parser.add_argument(
         "--ann_model_path",
         type=str,
         required=True,
-        help="変換元となるANNモデルのパス (.safetensors, .gguf, .pth)。"
+        help="変換元となるANNモデルのパスまたはHugging FaceモデルID。"
     )
     parser.add_argument(
         "--snn_model_config",
         type=str,
-        default="configs/models/small.yaml",
+        default="configs/models/spiking_transformer.yaml",
         help="変換先となるSNNモデルのアーキテクチャ設定ファイル。"
     )
     parser.add_argument(
@@ -99,36 +102,37 @@ def main():
 
     # コンバータを初期化
     converter = AnnToSnnConverter(snn_model=snn_model, model_config=snn_config)
+    
+    # 閾値キャリブレーション用のダミーデータローダー
+    vocab_size = container.tokenizer.provided.vocab_size()
+    dummy_data = torch.randint(0, vocab_size, (64, 20))
+    dummy_dataset = TensorDataset(dummy_data)
+    calibration_loader = DataLoader(dummy_dataset, batch_size=8)
 
     if args.method == "convert":
         converter.convert_weights(
             ann_model_path=args.ann_model_path,
-            output_path=args.output_snn_path
+            output_path=args.output_snn_path,
+            calibration_loader=calibration_loader
+        )
+    elif args.method == "llm-convert":
+        converter.convert_llm_weights(
+            ann_model_name_or_path=args.ann_model_path,
+            output_path=args.output_snn_path,
+            calibration_loader=calibration_loader
         )
     elif args.method == "distill":
         print(f"教師ANNモデルを {args.ann_model_path} からロードします。")
-        teacher_model = ANNBaselineModel(
-            vocab_size=container.tokenizer.provided.vocab_size(),
-            d_model=snn_config['d_model'],
-            nhead=snn_config['n_head'],
-            d_hid=snn_config['d_model'] * 2,
-            nlayers=snn_config['num_layers'],
-            num_classes=container.tokenizer.provided.vocab_size()
-        )
         try:
-            ann_weights = converter._load_ann_weights(args.ann_model_path)
-            teacher_model.load_state_dict(ann_weights, strict=False)
+            teacher_model = AutoModelForCausalLM.from_pretrained(args.ann_model_path)
             print("✅ 教師モデルの重みを正常にロードしました。")
         except Exception as e:
             print(f"❌ 教師モデルの重みロードに失敗しました: {e}")
             return
-
-        dummy_dataset = [torch.randint(0, container.tokenizer.provided.vocab_size(), (snn_config['time_steps'],)) for _ in range(32)]
-        dummy_loader = torch.utils.data.DataLoader(dummy_dataset, batch_size=4)
-
+            
         converter.run_online_distillation(
             ann_teacher_model=teacher_model,
-            dummy_data_loader=dummy_loader,
+            dummy_data_loader=calibration_loader,
             output_path=args.output_snn_path,
             epochs=3
         )
