@@ -3,6 +3,7 @@
 # 新しい統合学習実行スクリプト (完全版)
 #
 # 修正(mypy): [annotation-unchecked] noteを解消するため、型ヒントを追加。
+# 修正(mypy): [name-defined]エラーを解消するため、Unionをインポート。
 
 import argparse
 import os
@@ -12,7 +13,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split, DistributedSampler
 from dependency_injector.wiring import inject, Provide
-from typing import Optional, Tuple, List, Dict, Any, Callable, cast
+from typing import Optional, Tuple, List, Dict, Any, Callable, cast, Union
 from transformers import PreTrainedTokenizerBase
 
 from app.containers import TrainingContainer
@@ -122,7 +123,7 @@ def train(
         
         astrocyte = container.astrocyte_network(snn_model=snn_model) if args.use_astrocyte else None
         
-        trainer_provider: Callable
+        trainer_provider: Callable[..., BreakthroughTrainer]
         if paradigm == "gradient_based":
             optimizer = container.optimizer(params=snn_model.parameters())
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['gradient_based']['use_scheduler'] else None
