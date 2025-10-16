@@ -59,7 +59,7 @@ def fold_all_batchnorms(model: nn.Module) -> nn.Module:
     """
     model.eval()
     
-    # モデルのトップレベルの子モジュールをイテレート
+    # モジュールのトップレベルの子モジュールをイテレート
     for name, module in list(model.named_children()):
         # 1. Sequentialブロック内の探索
         if isinstance(module, nn.Sequential):
