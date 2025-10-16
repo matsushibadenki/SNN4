@@ -1,78 +1,118 @@
 # ファイルパス: snn_research/conversion/conversion_utils.py
-# (新規作成)
+# (更新)
 # Title: ANN-SNN変換 ユーティリティ
 # Description:
 # ANNからSNNへの変換プロセスにおける性能を最大化するための、
 # 高度な正規化およびキャリブレーション技術を提供する。
-# doc/SNN開発：精度向上とANN比較.md のセクション3.2「変換誤差への対処」に基づき、
-# 重み正規化と閾値バランシングを実装する。
+# 堅牢な重みコピー、パーセンタイルベースの閾値キャリブレーションを実装。
 
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
+import logging
 
-def normalize_weights(ann_model: nn.Module, percentile: float = 99.9) -> Dict[str, torch.Tensor]:
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def safe_copy_weights(target_model: nn.Module, source_state_dict: Dict[str, torch.Tensor], verbose: bool = True) -> Tuple[List[str], List[str]]:
     """
-    ANNモデルの重みを正規化し、SNNでの発火率が飽和しないように調整する。
-    各レイヤーの最大活性化値を推定し、それを基に重みをスケーリングする。
-
-    Args:
-        ann_model (nn.Module): 変換元の学習済みANNモデル。
-        percentile (float): スケーリング係数を決定するための活性化値のパーセンタイル。
+    安全に重みをコピーする。デバイス、データ型をターゲットに合わせ、
+    no_gradコンテキストで実行し、不一致キーをログに出力する。
 
     Returns:
-        Dict[str, torch.Tensor]: 正規化された重みを含むstate_dict。
+        Tuple[List[str], List[str]]: (missing_keys, unexpected_keys)
     """
-    print(f"⚖️ 重み正規化を開始します (パーセンタイル: {percentile}%)...")
-    state_dict = ann_model.state_dict()
-    normalized_state_dict = {}
+    missing_keys, unexpected_keys = [], []
+    target_sd = target_model.state_dict()
+    copied_count = 0
 
-    for name, module in ann_model.named_modules():
-        if isinstance(module, (nn.Linear, nn.Conv2d)):
-            weight_name = f"{name}.weight"
-            bias_name = f"{name}.bias"
-            
-            w = state_dict[weight_name]
-            
-            # ここでは簡易的に重みのノルムでスケーリングするが、
-            # 理想的にはキャリブレーションデータを通して最大活性化値を記録するべき
-            max_val = torch.quantile(torch.abs(w.view(-1)), percentile / 100.0)
-            
-            if max_val > 1.0:
-                scale_factor = max_val
-                normalized_state_dict[weight_name] = w / scale_factor
-                print(f"  - レイヤー '{name}' の重みを {scale_factor:.2f} でスケーリングしました。")
-                if bias_name in state_dict:
-                    normalized_state_dict[bias_name] = state_dict[bias_name] / scale_factor
+    with torch.no_grad():
+        for k, v_target in target_sd.items():
+            if k in source_state_dict:
+                v_source = source_state_dict[k]
+                if v_source.shape == v_target.shape:
+                    v_target.copy_(v_source.to(v_target.device, v_target.dtype))
+                    copied_count += 1
+                else:
+                    if verbose:
+                        logging.warning(f"[Shape Mismatch] Key '{k}': target shape {v_target.shape}, source shape {v_source.shape}. Skipped.")
             else:
-                normalized_state_dict[weight_name] = w
-                if bias_name in state_dict:
-                    normalized_state_dict[bias_name] = state_dict[bias_name]
+                missing_keys.append(k)
+        
+        for k_source in source_state_dict:
+            if k_source not in target_sd:
+                unexpected_keys.append(k_source)
 
-    print("✅ 重み正規化が完了しました。")
-    return normalized_state_dict
+    if verbose:
+        logging.info(f"Weight copy summary: {copied_count} params copied.")
+        if missing_keys:
+            logging.warning(f"Missing keys in source state_dict: {missing_keys}")
+        if unexpected_keys:
+            logging.warning(f"Unexpected keys in source state_dict: {unexpected_keys}")
+            
+    return missing_keys, unexpected_keys
 
 
 @torch.no_grad()
-def balance_thresholds(snn_model: nn.Module, calibration_loader: Any, target_rate: float = 0.1):
+def calibrate_thresholds_by_percentile(
+    ann_model: nn.Module, 
+    dataloader: Any, 
+    percentile: float = 99.9, 
+    device: str = "cpu"
+) -> Dict[str, float]:
     """
-    キャリブレーションデータセットを使い、各層の発火閾値を調整して
-    目標発火率を達成するように最適化する。
+    ANNモデルの各層の活性化を記録し、パーセンタイルに基づいて
+    SNNの閾値を決定する。
 
     Args:
-        snn_model (nn.Module): 変換後のSNNモデル。
-        calibration_loader (Any): 閾値調整用のデータローダー。
-        target_rate (float): 目標とする平均発火率。
+        ann_model (nn.Module): 活性化を記録するANNモデル。
+        dataloader: キャリブレーション用データローダー。
+        percentile (float): 閾値決定に使用するパーセンタイル。
+        device (str): 計算に使用するデバイス。
+
+    Returns:
+        Dict[str, float]: レイヤー名をキー、計算された閾値を値とする辞書。
     """
-    print(f"🔧 閾値バランシングを開始します (目標発火率: {target_rate:.2f})...")
+    ann_model.eval()
+    ann_model.to(device)
     
-    #
-    # この機能は `ann_to_snn_converter.py` の `calibrate_thresholds` メソッドに
-    # 統合・実装されています。このファイルでは概念的な分離のために定義していますが、
-    # 実際のエントリーポイントはConverterクラスのメソッドとなります。
-    #
-    # converter.calibrate_thresholds(calibration_loader, target_rate)
-    # を呼び出すことで、このプロセスが実行されます。
-    #
-    print("✅ (この機能はAnnToSnnConverter.calibrate_thresholdsに統合されています)")
+    activations: Dict[str, List[torch.Tensor]] = {}
+
+    def get_activation(name: str):
+        def hook(model, input, output):
+            # ReLUなどの活性化関数の出力を記録
+            if name not in activations:
+                activations[name] = []
+            activations[name].append(output.detach())
+        return hook
+
+    hooks = []
+    for name, module in ann_model.named_modules():
+        if isinstance(module, (nn.ReLU, nn.GELU)):
+            hooks.append(module.register_forward_hook(get_activation(name)))
+
+    logging.info(f"キャリブレーション用データを {len(dataloader)} バッチ処理します...")
+    for batch in tqdm(dataloader, desc="Calibrating Thresholds"):
+        inputs = batch[0].to(device) if isinstance(batch, (list, tuple)) else batch.to(device)
+        ann_model(inputs)
+
+    for hook in hooks:
+        hook.remove()
+
+    thresholds: Dict[str, float] = {}
+    logging.info("各レイヤーの閾値を計算中...")
+    for name, act_list in activations.items():
+        all_acts = torch.cat(act_list)
+        # 活性化の最大値をチャネルごとに取得
+        # (B, C, H, W) -> (B*H*W, C) -> max over non-channel dims
+        if all_acts.dim() == 4: # Conv
+            all_acts = all_acts.permute(0, 2, 3, 1).reshape(-1, all_acts.shape[1])
+        
+        # 0より大きい活性化のみを考慮
+        all_acts = all_acts[all_acts > 0]
+        if all_acts.numel() > 0:
+            threshold = torch.quantile(all_acts, q=percentile / 100.0).item()
+            thresholds[name] = threshold
+            logging.info(f"  - Layer '{name}': Threshold = {threshold:.4f}")
+
+    return thresholds

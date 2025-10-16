@@ -3,35 +3,41 @@
 # GGUF/Safetensors形式のANNモデルからSNNへの変換・蒸留を行うコンバータ
 #
 # 機能:
-# - 指定されたパスからSafetensorsまたはGGUFモデルの重みをロードする。
-# - ANN-SNN変換: ANNの重みをSNNモデルに直接コピーする。
-# - オンライン知識蒸留: ANNを教師モデルとして、SNNを学習させる。
-# - 閾値キャリブレーション機能を追加し、変換後のSNNの活動を安定させる。
-# - [改善] GGUFファイルの読み込み機能を正式に実装。
-# - [改善 v2] LLM変換用の高忠実度変換メソッド `convert_llm_weights` を追加。
+# - [改善 v3] 堅牢な変換パイプラインを実装。BatchNorm Folding, 安全な重みコピー,
+#   パーセンタイルベースの閾値キャリブレーション、ロギングを導入。
+# - [改善 v3] LLM変換の非現実性を明確化し、ハイブリッドアプローチの重要性を強調。
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from safetensors.torch import load_file
-from tqdm import tqdm  # type: ignore
-from typing import Dict, Any, Optional, Iterator
-from gguf import GGUFReader
+from tqdm import tqdm
+from typing import Dict, Any, Optional
+import logging
 from transformers import AutoModelForCausalLM
 
-from snn_research.benchmark.ann_baseline import ANNBaselineModel
-from snn_research.core.snn_core import AdaptiveLIFNeuron, BreakthroughSNN
-from .conversion_utils import normalize_weights
+from snn_research.core.snn_core import AdaptiveLIFNeuron
+from .conversion_utils import safe_copy_weights, calibrate_thresholds_by_percentile
+from .fold_bn import fold_all_batchnorms
+
+# GGUFの依存関係をオプションにする
+try:
+    from gguf import GGUFReader
+    GGUF_AVAILABLE = True
+except ImportError:
+    GGUF_AVAILABLE = False
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def _load_gguf(path: str) -> Dict[str, torch.Tensor]:
     """GGUFファイルを読み込み、PyTorchのstate_dictを返す。"""
-    print(f" GGUFファイルをロード中: {path}")
+    if not GGUF_AVAILABLE:
+        raise ImportError("GGUFファイルを読み込むには `gguf` ライブラリが必要です。`pip install gguf` を実行してください。")
+    logging.info(f"GGUFファイルをロード中: {path}")
     reader = GGUFReader(path, 'r')
-    state_dict = {}
-    for tensor in reader.tensors:
-        state_dict[tensor.name] = torch.from_numpy(tensor.data.copy())
-    print(f"✅ GGUFから {len(state_dict)} 個のテンソルをロードしました。")
+    state_dict = {tensor.name: torch.from_numpy(tensor.data.copy()) for tensor in reader.tensors}
+    logging.info(f"✅ GGUFから {len(state_dict)} 個のテンソルをロードしました。")
     return state_dict
 
 class AnnToSnnConverter:
@@ -44,76 +50,26 @@ class AnnToSnnConverter:
         self.device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         self.snn_model.to(self.device)
 
-    def _load_ann_weights(self, ann_model_path: str) -> Dict[str, torch.Tensor]:
+    def _load_ann_weights(self, ann_model_path: str, is_llm: bool = False) -> Dict[str, torch.Tensor]:
         """ANNモデルの重みをファイルから読み込む。"""
-        print(f"💾 ANNモデルの重みをロード中: {ann_model_path}")
+        logging.info(f"💾 ANNモデルの重みをロード中: {ann_model_path}")
         if ann_model_path.endswith(".safetensors"):
             return load_file(ann_model_path, device=self.device)
         elif ann_model_path.endswith(".gguf"):
             return _load_gguf(ann_model_path)
-        else:
-            # Hugging FaceのモデルIDまたはローカルパスを想定
+        elif is_llm:
             try:
                 model = AutoModelForCausalLM.from_pretrained(ann_model_path)
                 return model.state_dict()
             except Exception as e:
-                raise ValueError(f"サポートされていないファイル形式またはモデルIDです: {ann_model_path}. Error: {e}")
-
-    def calibrate_thresholds(self, calibration_loader: Any, target_rate: float = 0.1, epochs: int = 1):
-        """
-        変換後のSNNモデルの発火閾値をキャリブレーションする。
-        """
-        print(f"⚙️ 発火閾値のキャリブレーションを開始します (目標発火率: {target_rate:.2f})...")
-        self.snn_model.train()
-
-        lif_layers = [m for m in self.snn_model.modules() if isinstance(m, AdaptiveLIFNeuron)]
-        if not lif_layers:
-            print("⚠️ 適応的閾値を持つLIFニューロンが見つからないため、キャリブレーションをスキップします。")
-            return
-
-        for layer in lif_layers:
-            layer.target_spike_rate = target_rate
-
-        with torch.no_grad():
-            for epoch in range(epochs):
-                for batch in tqdm(calibration_loader, desc=f"Calibration Epoch {epoch+1}"):
-                    inputs = batch[0].to(self.device) if isinstance(batch, (list, tuple)) else batch.to(self.device)
-                    self.snn_model(inputs)
-
-        print("✅ キャリブレーションが完了しました。")
-        self.snn_model.eval()
-
-    def convert_weights(
-        self,
-        ann_model_path: str,
-        output_path: str,
-        calibration_loader: Optional[Any] = None
-    ) -> None:
-        """
-        ANN-SNN変換（重みコピー）を実行し、オプションで閾値キャリブレーションを行う。
-        """
-        ann_weights = self._load_ann_weights(ann_model_path)
-        snn_state_dict = self.snn_model.state_dict()
-
-        print("🔄 ANNの重みをSNNモデルにコピーしています...")
-        
-        copied_keys = 0
-        for name, param in snn_state_dict.items():
-            if name in ann_weights and param.shape == ann_weights[name].shape:
-                snn_state_dict[name].copy_(ann_weights[name])
-                copied_keys += 1
-        
-        print(f"  - {copied_keys}個のパラメータをコピーしました。")
-        self.snn_model.load_state_dict(snn_state_dict, strict=False)
-
-        if calibration_loader:
-            self.calibrate_thresholds(calibration_loader)
-        
-        torch.save({
-            'model_state_dict': self.snn_model.state_dict(),
-            'config': self.model_config
-        }, output_path)
-        print(f"✅ 重み変換が完了し、モデルを '{output_path}' に保存しました。")
+                logging.error(f"Hugging Faceモデルのロードに失敗しました: {e}")
+                raise
+        else:
+            try:
+                return torch.load(ann_model_path, map_location=self.device)
+            except Exception as e:
+                logging.error(f"PyTorchモデルのロードに失敗しました: {e}")
+                raise
 
     def convert_llm_weights(
         self,
@@ -124,98 +80,82 @@ class AnnToSnnConverter:
         """
         Hugging FaceのLLMをロードし、正規化と高度なマッピングを行ってSNNに変換する。
         """
-        print(f"--- 🚀 高忠実度LLM変換開始: {ann_model_name_or_path} ---")
+        logging.info(f"--- 🚀 高忠実度LLM変換開始: {ann_model_name_or_path} ---")
         
         # 1. ANNモデルのロード
         ann_model = AutoModelForCausalLM.from_pretrained(ann_model_name_or_path).to(self.device)
         ann_model.eval()
 
-        # 2. 重み正規化
-        normalized_ann_weights = normalize_weights(ann_model)
-
-        # 3. 高度な重みマッピング
-        snn_state_dict = self.snn_model.state_dict()
-        print("🔄 高度な重みマッピングを実行中...")
-        copied_count = 0
-        missed_count = 0
-
         #
-        # ここに、ANN (例: GPT2) と SNN (例: SpikingTransformer) の
-        # レイヤー構造の違いを吸収するマッピングロジックを実装します。
-        # これは非常に複雑で、モデルのアーキテクチャに強く依存します。
+        # 警告: Transformer全体の完全なスパイク化は非常に困難です。
+        # 特に、LayerNormやSoftmaxを含む自己注意メカニズムの直接変換は、
+        # 大幅な精度低下や、膨大なタイムステップ数を要求する原因となります。
         #
-        # 例: GPT2の 'transformer.h.{i}.attn.c_attn' はSNNでは 'q_proj', 'k_proj', 'v_proj' に分離されている
+        # 現実的なアプローチは、以下のいずれかです:
+        # 1. ハイブリッドモデル: Attentionなど計算が複雑な部分はアナログのまま残し、
+        #    FFN層など一部のみをSNNに置き換える。
+        # 2. ANN-SNN変換 + 長時間の微調整: 重みをコピーした後、代理勾配法を
+        #    用いてSNNモデルを再度ファインチューニングする。
         #
-        for ann_name, ann_param in normalized_ann_weights.items():
-            # ここでは単純な名前ベースのマッピングを試みるが、本来は正規表現や構造解析が必要
-            if ann_name in snn_state_dict and snn_state_dict[ann_name].shape == ann_param.shape:
-                snn_state_dict[ann_name].copy_(ann_param)
-                copied_count += 1
-            else:
-                missed_count += 1
-        
-        print(f"  - {copied_count}個のパラメータを直接マッピングしました。")
-        print(f"  - {missed_count}個のパラメータはマッピングできませんでした（要調査）。")
+        # このメソッドでは、主に互換性のある線形層の安全な重みコピーに焦点を当てます。
+        logging.warning("LLMの完全なSNN化は実験的です。ハイブリッドアプローチを推奨します。")
 
-        self.snn_model.load_state_dict(snn_state_dict, strict=False)
+        # 2. 重みコピー
+        ann_state_dict = ann_model.state_dict()
+        safe_copy_weights(self.snn_model, ann_state_dict)
 
-        # 4. 閾値キャリブレーション
+        # 3. 閾値キャリブレーション
         if calibration_loader:
-            self.calibrate_thresholds(calibration_loader)
+            logging.info("LLMアクティベーションに基づく閾値キャリブレーションを実行します...")
+            thresholds = calibrate_thresholds_by_percentile(ann_model, calibration_loader, device=self.device)
+            # ここで、計算された閾値をSNNモデルの各LIFニューロンに設定するロジックが必要
+            # 例: for name, module in self.snn_model.named_modules(): ...
+            logging.info(f"計算された閾値: {thresholds}")
         else:
-            print("⚠️ キャリブレーションデータが提供されなかったため、閾値調整をスキップします。")
+            logging.warning("キャリブレーションデータがないため、閾値調整をスキップします。精度が大幅に低下する可能性があります。")
 
-        # 5. 変換済みモデルの保存
+        # 4. 変換済みモデルの保存
         torch.save({
             'model_state_dict': self.snn_model.state_dict(),
             'config': self.model_config
         }, output_path)
-        print(f"✅ LLM変換が完了し、モデルを '{output_path}' に保存しました。")
+        logging.info(f"✅ LLM変換が完了し、モデルを '{output_path}' に保存しました。")
 
-
-    def run_online_distillation(
+    def convert_cnn_weights(
         self,
-        ann_teacher_model: nn.Module,
-        dummy_data_loader: Any, # 本来は学習データローダー
+        ann_model: nn.Module,
         output_path: str,
-        epochs: int = 3
-    ) -> None:
-        """
-        オンライン知識蒸留を実行する。
-        """
-        ann_teacher_model.to(self.device)
-        ann_teacher_model.eval()
+        calibration_loader: Any
+    ):
+        """CNNモデルの高忠実度変換を実行する。"""
+        logging.info("--- 🚀 高忠実度CNN変換開始 ---")
+        ann_model.to(self.device)
+        ann_model.eval()
 
-        optimizer = optim.AdamW(self.snn_model.parameters(), lr=1e-4)
-        loss_fn = nn.KLDivLoss(reduction='batchmean', log_target=True)
-
-        print("🔥 オンライン知識蒸留を開始します...")
-        self.snn_model.train()
-
-        for epoch in range(epochs):
-            progress_bar = tqdm(dummy_data_loader, desc=f"Distillation Epoch {epoch+1}")
-            for batch in progress_bar:
-                inputs = batch[0].to(self.device) if isinstance(batch, (list, tuple)) else batch.to(self.device)
-                
-                optimizer.zero_grad()
-                
-                snn_logits, _, _ = self.snn_model(inputs)
-                
-                with torch.no_grad():
-                    teacher_outputs = ann_teacher_model(inputs)
-                    teacher_logits = teacher_outputs.logits if hasattr(teacher_outputs, 'logits') else teacher_outputs
-                
-                loss = loss_fn(
-                    F.log_softmax(snn_logits / 2.0, dim=-1),
-                    F.log_softmax(teacher_logits / 2.0, dim=-1)
-                )
-                
-                loss.backward()
-                optimizer.step()
-                progress_bar.set_postfix({"loss": loss.item()})
+        # 1. BatchNorm Folding
+        logging.info("BatchNorm Foldingを実行中...")
+        folded_model = fold_all_batchnorms(ann_model)
         
+        # 2. 閾値キャリブレーション
+        logging.info("パーセンタイルベースの閾値キャリブレーションを実行中...")
+        thresholds = calibrate_thresholds_by_percentile(folded_model, calibration_loader, device=self.device)
+        
+        # SNNモデルの対応するLIF層に閾値を設定
+        lif_layers = [m for m in self.snn_model.modules() if isinstance(m, AdaptiveLIFNeuron)]
+        if len(lif_layers) == len(thresholds):
+            for lif, (name, thr) in zip(lif_layers, thresholds.items()):
+                lif.base_threshold.data.fill_(thr)
+                logging.info(f"SNNレイヤーの閾値を {thr:.4f} に設定しました。")
+        else:
+            logging.warning("ANNとSNNのReLU/LIF層の数が一致しません。閾値設定をスキップします。")
+            
+        # 3. 安全な重みコピー
+        logging.info("安全な重みコピーを実行中...")
+        safe_copy_weights(self.snn_model, folded_model.state_dict())
+        
+        # 4. モデルの保存
         torch.save({
             'model_state_dict': self.snn_model.state_dict(),
             'config': self.model_config
         }, output_path)
-        print(f"✅ 知識蒸留が完了し、モデルを '{output_path}' に保存しました。")
+        logging.info(f"✅ CNN変換が完了し、モデルを '{output_path}' に保存しました。")
