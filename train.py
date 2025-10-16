@@ -1,15 +1,8 @@
 # matsushibadenki/snn3/train.py
-# (旧 snn_research/training/main.py)
-#
+# (更新)
 # 新しい統合学習実行スクリプト (完全版)
 #
-# (省略...)
-# - 改善点 (snn_4_ann_parity_plan): 量子化認識学習(QAT)の適用ロジックを追加。
-# - 改善点 (snn_4_ann_parity_plan): 学習後の構造的プルーニング機能を追加。
-# - 修正(mypy): [arg-type]エラーを解消するため、castを使用して型を明示。
-# - 改善点(snn_4_ann_parity_plan): EWCデータのロード機能を追加。
-# - 修正(v2): QATの適用タイミングを学習開始前に修正。
-# - 改善点(v3): snnTorchバックエンドの切り替え機能を追加。
+# 修正(mypy): [annotation-unchecked] noteを解消するため、型ヒントを追加。
 
 import argparse
 import os
@@ -20,6 +13,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, random_split, DistributedSampler
 from dependency_injector.wiring import inject, Provide
 from typing import Optional, Tuple, List, Dict, Any, Callable, cast
+from transformers import PreTrainedTokenizerBase
 
 from app.containers import TrainingContainer
 from snn_research.data.datasets import get_dataset_class, DistillationDataset, DataFormat, SNNBaseDataset
@@ -36,10 +30,10 @@ container = TrainingContainer()
 
 @inject
 def train(
-    args,
+    args: argparse.Namespace,
     config: Dict[str, Any] = Provide[TrainingContainer.config],
-    tokenizer=Provide[TrainingContainer.tokenizer],
-):
+    tokenizer: PreTrainedTokenizerBase = Provide[TrainingContainer.tokenizer],
+) -> None:
     """学習プロセスを実行するメイン関数"""
     is_distributed = args.distributed
     rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -61,12 +55,16 @@ def train(
             print(f"   より性能を向上させるには、`python scripts/data_preparation.py` を実行してください。")
         
         DatasetClass = get_dataset_class(DataFormat(config['data']['format']))
-        dataset = DistillationDataset(
-            file_path=os.path.join(data_path, "distillation_data.jsonl"), data_dir=data_path,
-            tokenizer=tokenizer, max_seq_len=config['model']['time_steps']
-        ) if is_distillation else DatasetClass(
-            file_path=data_path, tokenizer=tokenizer, max_seq_len=config['model']['time_steps']
-        )
+        dataset: SNNBaseDataset
+        if is_distillation:
+            dataset = DistillationDataset(
+                file_path=os.path.join(data_path, "distillation_data.jsonl"), data_dir=data_path,
+                tokenizer=tokenizer, max_seq_len=config['model']['time_steps']
+            )
+        else:
+            dataset = DatasetClass(
+                file_path=data_path, tokenizer=tokenizer, max_seq_len=config['model']['time_steps']
+            )
             
         train_size = int((1.0 - config['data']['split_ratio']) * len(dataset))
         val_size = len(dataset) - train_size
@@ -83,17 +81,19 @@ def train(
         )
 
     print(f"🚀 学習パラダイム '{paradigm}' で学習を開始します...")
+    
+    trainer: Union[BreakthroughTrainer, BioRLTrainer, ParticleFilterTrainer]
 
     if paradigm.startswith("bio-"):
         if paradigm == "bio-causal-sparse":
             print("🧬 適応的因果スパース化を有効にした強化学習を開始します。")
             container.config.training.biologically_plausible.adaptive_causal_sparsification.enabled.from_value(True)
-            bio_trainer: BioRLTrainer = container.bio_rl_trainer()
+            bio_trainer = container.bio_rl_trainer()
             bio_trainer.train(num_episodes=config['training']['epochs'])
         elif paradigm == "bio-particle-filter":
             print("🌪️ パーティクルフィルタによる確率的学習を開始します (CPUベース)。")
             container.config.training.biologically_plausible.particle_filter.enabled.from_value(True)
-            particle_trainer: ParticleFilterTrainer = container.particle_filter_trainer()
+            particle_trainer = container.particle_filter_trainer()
             dummy_data = torch.rand(1, 10, device=device)
             dummy_targets = torch.rand(1, 2, device=device)
             for epoch in range(config['training']['epochs']):
@@ -106,15 +106,12 @@ def train(
         if is_distributed and paradigm != "gradient_based":
             raise NotImplementedError(f"{paradigm} learning does not support DDP yet.")
         
-        # --- ▼ backend対応 ▼ ---
         snn_model: nn.Module = container.snn_model(backend=args.backend)
-        # --- ▲ backend対応 ▲ ---
 
-        # QATは学習ループの前に適用する
         if config.get('training', {}).get('quantization', {}).get('enabled', False):
             if is_distributed:
                 print("⚠️ 警告: 量子化認識学習(QAT)と分散学習(DDP)の併用は実験的です。")
-            snn_model.to('cpu') # QATの準備はCPUで行う必要がある
+            snn_model.to('cpu')
             snn_model = apply_qat(snn_model)
             print("✅ 量子化認識学習（QAT）のためにモデルを準備しました。")
         
@@ -125,7 +122,7 @@ def train(
         
         astrocyte = container.astrocyte_network(snn_model=snn_model) if args.use_astrocyte else None
         
-        trainer: BreakthroughTrainer
+        trainer_provider: Callable
         if paradigm == "gradient_based":
             optimizer = container.optimizer(params=snn_model.parameters())
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['gradient_based']['use_scheduler'] else None
@@ -168,7 +165,7 @@ def train(
     else:
         raise ValueError(f"Unknown or unsupported training paradigm for this script: '{paradigm}'.")
 
-    if rank in [-1, 0]:
+    if rank in [-1, 0] and 'trainer' in locals():
         final_model_unwrapped = trainer.model.module if is_distributed else trainer.model
         final_model = cast(nn.Module, final_model_unwrapped)
         
@@ -186,18 +183,18 @@ def train(
             torch.save(pruned_model.state_dict(), pruned_path)
             print(f"✅ プルーニング済みモデルを '{pruned_path}' に保存しました。")
 
-        print("✅ 学習が完了しました。")
+    print("✅ 学習が完了しました。")
 
 
-def collate_fn(tokenizer, is_distillation: bool) -> Callable[[List[Tuple[torch.Tensor, ...]]], Tuple[torch.Tensor, ...]]:
+def collate_fn(tokenizer: PreTrainedTokenizerBase, is_distillation: bool) -> Callable[[List[Tuple[torch.Tensor, ...]]], Tuple[torch.Tensor, ...]]:
     def collate(batch: List[Tuple[torch.Tensor, ...]]) -> Tuple[torch.Tensor, ...]:
-        padding_val = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        padding_val = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
         
         inputs = [item[0] for item in batch]
         targets = [item[1] for item in batch]
         
-        padded_inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=float(padding_val if padding_val is not None else 0))
-        padded_targets = torch.nn.utils.rnn.pad_sequence(targets, batch_first=True, padding_value=float(padding_val if padding_val is not None else 0))
+        padded_inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=float(padding_val))
+        padded_targets = torch.nn.utils.rnn.pad_sequence(targets, batch_first=True, padding_value=float(padding_val))
 
         if is_distillation:
             logits = [item[2] for item in batch]
@@ -206,7 +203,7 @@ def collate_fn(tokenizer, is_distillation: bool) -> Callable[[List[Tuple[torch.T
         return padded_inputs.long(), padded_targets.long()
     return collate
     
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="SNN 統合学習スクリプト")
     parser.add_argument("--config", type=str, default="configs/base_config.yaml", help="基本設定ファイル")
     parser.add_argument("--model_config", type=str, help="モデルアーキテクチャ設定ファイル")
