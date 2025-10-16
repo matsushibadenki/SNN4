@@ -66,8 +66,8 @@ def fold_all_batchnorms(model: nn.Module) -> nn.Module:
             layers = list(module.children())
             for i in range(len(layers) - 1):
                 if isinstance(layers[i], nn.Conv2d) and isinstance(layers[i+1], nn.BatchNorm2d):
-                    conv = layers[i]
-                    bn = layers[i+1]
+                    conv = cast(nn.Conv2d, layers[i])
+                    bn = cast(nn.BatchNorm2d, layers[i+1])
                     
                     if bn.track_running_stats:
                         logging.info(f"Folding BN in Sequential block '{name}' (layer {i+1}) into Conv (layer {i}).")
