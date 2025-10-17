@@ -1,126 +1,89 @@
-# ROADMAP v10.1 — 継続学習
+# **ROADMAP v11.0 — 実用性の検証と自己進化の統合**
 
-> この追加は「ANN を超える SNN 系 AI を実現する」ための継続学習要素（Meta-Plasticity、Neuromodulation、Replay、Adapter 層など）を、既存 ROADMAP v10.0 のフェーズに**スケジュールとして組み込み**たものです。
+このロードマップは、「SNN4プロジェクト発展計画書」の優先度の高い目標（実ハードウェアでの検証、NAS多目的最適化、継続学習）を採用し、既存のフェーズを再構築・強化したものです。プロジェクトの焦点は、**理論的実装から実証的な優位性の証明**へと移行します。
 
----
+## **目的**
 
-## 目的
-- SNN の**継続学習能力**と**低エネルギー利点**を活かして、ANN 系の静的モデル（LLM 等）では実現しにくい「逐次適応」「オンデバイス更新」「忘却耐性」を持つ AI を構築する。
-- 短期で ANN 性能に追随しつつ、中長期で ANN の限界を超える運用上の優位性（省エネ・適応性）を示す。
+* SNN の**継続学習能力**と**低エネルギー利点**を活かして、ANN 系の静的モデル（LLM 等）では実現しにくい「逐次適応」「オンデバイス更新」「忘却耐性」を持つ AI を構築する。  
+* 短期で ANN 性能に追随しつつ、中長期で ANN の限界を超える運用上の優位性（省エネ・適応性）を示す。
 
----
+## **要点**
 
-## 要点
-1. **短期（0–6週）**：ANN→SNN の精度ギャップを潰す基盤（Distillation, ann2snn, threshold balancing）を固める。
-2. **中期（6–24週）**：継続学習モジュール（MetaPlasticity、Neuromodulated Plasticity、Replay Memory、Adapter 層）を実装し、オンライン更新パイプラインを確立する。
-3. **長期（24週〜12ヶ月）**：大規模スパイキングTransformer・ニューロモルフィック実機統合（Loihi 等）、運用でのエネルギー優位性、自己進化/社会性実験。
+1. **短期（0–6週）**：ANN→SNN の精度ギャップを潰す基盤（Distillation, ann2snn, threshold balancing）を固める。（**フェーズ1**）  
+2. **中期（6–24週）**：**キラーアプリケーション**を構築し、**実ハードウェア**上でエネルギー効率を定量的に証明する。（**フェーズ2 \- NEW**）  
+3. **中長期（24–52週）**：**継続学習**と**自己進化**のメカニズム（多目的NAS、EWC、好奇心駆動）を統合し、ANNを超える適応性と自律性を実証する。（**フェーズ3/4**）  
+4. **長期（52週〜）**：大規模スパイキングTransformer・ニューロモルフィック実機統合（Loihi 等）、運用でのエネルギー優位性、自己進化/社会性実験。（**フェーズ5**）
 
----
+## **フェーズ別スケジュール**
 
-## フェーズ別スケジュール
+### **フェーズ 0 — 準備（完了）**
 
-### フェーズ 0 — 準備（Week - / 0–2）
 **目的**: ベースライン整備
-- タスク
-  - ベンチセット確定（CIFAR-10/100, ImageNet-subset, DVS dataset, NLP token tasks小規模）
-  - 教師モデル準備（ResNet / ViT / 小型Transformer）
-  - CI パイプライン（benchmarks/run_bench.py）作成
-- 成果物: ベースラインレポート、ベンチスイート
 
-### フェーズ 1 — 短期実装（Week 0–6）
+* タスク: ベンチセット確定、教師モデル準備、CI パイプライン作成済み。
+
+### **フェーズ 1 — 短期実装：精度パリティの確立（Week 0–6）**
+
 **目的**: ANN→SNN 蒸留で迅速に精度差を縮める
-- 主要タスク（並列実施）
-  - Distillation 拡張（`snn4/distillation/`）: `teacher.py`, `losses.py`, `projector.py` を追加
-  - ANN→SNN 変換ツール（`snn4/tools/ann2snn.py`）: BN folding, threshold balancing
-  - ハイパーパラ探索自動化（Optuna）で T, temp, loss weights を最適化
-  - 評価: top1/top5, spike count, latency, energy-estimate
-- マイルストーン（Week 6）: CIFAR/小型 ImageNet で ANN 比 ≤2% を目指す
 
-### フェーズ 2 — 継続学習プロトタイプ（Week 6–16）
-**目的**: 継続学習の基本ユニットを実装・評価
-- 主要タスク
-  - `snn4/modules/adaptive_learning.py` を追加（MetaPlasticityLayer, Neuromodulator）
-  - Replay Buffer（スパイク列の保存・再生）と Replay Scheduler 実装
-  - Adapter 層（局所的ファインチューニング用 1x1 conv）を設計・追加
-  - 小規模オンライン学習実験（逐次データ流での学習と忘却評価）
-- マイルストーン（Week 12）: 新データを逐次追加しても既存性能の低下（forgetting）を 30% 以下に抑える
+* **主要タスク（並列実施）**  
+  1. Distillation 拡張（snn4/distillation/）: ロジット/特徴/スパイクスパース性損失を追加。  
+  2. ANN→SNN 変換ツール（snn4/tools/ann2snn.py）: BN folding, threshold balancing を実装し、高忠実度変換を確立。  
+  3. ハイパーパラ探索自動化（Optuna 等）で T, temp, loss weights を最適化。  
+* **マイルストーン（Week 6）**: CIFAR/小型 ImageNet で ANN 比 ≤2% の精度差を目指す。
 
-### フェーズ 3 — Surfacing LLM-like 機能（Week 16–36）
-**目的**: 大規模言語処理に近い用途へ適用するための構造適応
-- 主要タスク
-  - Spiking Transformer の中核実装（`snn4/models/spiking_transformer.py`）
-  - Spiking Embedding / Token Encoding（時間符号化）を設計
-  - 継続学習モジュールをトランスフォーマーに統合
-  - オフライン蒸留 + オンライン適応ハイブリッド戦略を確立
-- マイルストーン（Week 36）: 小型言語タスク（次単語予測等）での意味的整合性確認
+### **フェーズ 2 — 実用性の証明とエネルギー計測（Week 6–16）**
 
-### フェーズ 4 — ニューロモルフィック統合 & 運用（Week 36–52+）
-**目的**: 実機でのエネルギー優位性とオンライン学習を実証
-- 主要タスク
-  - Loihi 等へのモデル変換・最適化（sparser weights, quantization, delay handling）
-  - 実機で Joules/inference を計測し、同クラス ANN と比較
-  - 自律運用シナリオでの長期学習実験（数週間〜数ヶ月）
-- マイルストーン（Month 12）: 実機で Joules/inference を ANN 比で 3x 以上改善（目標例）
+**目的**: SNNの低エネルギー利点を実測で証明し、「キラーアプリケーション」の実現性を検証する。
 
----
+* **主要タスク（NEW）**  
+  1. **エネルギープロファイラの完成**: snn\_research/benchmark/energy\_profiler.py を実装し、CPU/GPUでの電力計測を可能にする。  
+  2. **エッジAIデモの構築**: Raspberry Pi/Jetson Nano向けの**超低消費電力画像認識アプリ**のプロトタイプ（applications/edge\_vision/）を作成。  
+  3. **包括的ベンチマークの実行**: 精度、レイテンシに加え、**実測での Energy per Inference (mJ)** を指標に追加し、ANN（INT8/FP32）との比較レポートを作成。  
+* **マイルストーン（Week 16）**: 既存のANN比で **エネルギー効率を 2倍以上改善** したことを実測データで証明する。
 
-## タスク詳細マトリクス（短期〜中期の Sprint 単位）
-- Sprint 0 (Week 0–2): ベンチ整備、teacher モデル準備、CI
-- Sprint 1 (Week 2–4): Distillation コード化、ann2snn PoC
-- Sprint 2 (Week 4–6): ハイパーパラ最適化、精度チェック、レポート
-- Sprint 3 (Week 6–8): MetaPlasticity 基礎モジュール実装
-- Sprint 4 (Week 8–12): Replay/Adapter 実験、忘却試験
-- Sprint 5 (Week 12–16): 基本オンライン学習パイプラインの完成
-- Sprint 6–9 (Week 16–36): SpikingTransformer 構築と統合試験
-- Sprint 10–? (Week 36+): ニューロモルフィック最適化と実機評価
+### **フェーズ 3 — 自己進化：多目的NASと自律性強化（Week 16–36）**
 
----
+**目的**: 自律的改善システムを強化し、性能、エネルギー、レイテンシの**多目的最適化**を可能にする。
 
-## リポジトリとの対応（Suggested file map）
-- `snn4/distillation/teacher.py` — ANN teacher extractor
-- `snn4/distillation/losses.py` — logits/feature/timing/spike sparsity losses
-- `snn4/tools/ann2snn.py` — conversion utilities (BN fold, threshold balancing)
-- `snn4/modules/adaptive_learning.py` — MetaPlasticityLayer, Neuromodulation
-- `snn4/modules/replay.py` — Spike Replay Buffer & Scheduler
-- `snn4/models/spiking_transformer.py` — Spiking Transformer prototype
-- `benchmarks/run_bench.py` — 自動ベンチスイート
+* **主要タスク**  
+  1. **多目的NASの実装**: SelfEvolvingAgentに、精度、エネルギー、レイテンシの**パレート最適解**を探索する AdvancedNAS アルゴリズムを統合。  
+  2. **学習パラダイムの自己進化**: エージェントがタスクとパフォーマンス評価に基づき、学習戦略（勾配ベース、因果追跡、確率的アンサンブル）を自律的に切り替えるロジックを実装。  
+  3. **好奇心駆動学習の統合**: IntrinsicCuriosityModuleを実装し、予測誤差を内発的報酬として未知の知識やモデル構造を自律的に探索させる。  
+* **マイルストーン（Week 36）**: エージェントが手動調整なしに、性能要件を満たす**エネルギー効率の最適化モデル**を自律的に発見できることを実証する。
 
----
+### **フェーズ 4 — 継続学習：忘却の克服と適応性（Week 36–52）**
 
-## 評価指標（KPI）
-- 精度: top1 / top5（各データセット）
-- 忘却率: 新知識学習後の既存タスク性能低下（%）
-- スパイク効率: 平均スパイク数 / inference
-- レイテンシ: ms / inference
-- エネルギー: J / inference（実測 or 見積）
-- 総合指標: 性能（精度）/消費エネルギー 比
+**目的**: ANNの弱点である「破局的忘却」を克服するSNN独自の強みを示す。
 
----
+* **主要タスク**  
+  1. **EWC（Elastic Weight Consolidation）の実装**: CombinedLoss にEWC正則化を統合し、タスクを逐次学習しても過去のタスクの性能を維持するパイプラインを構築。  
+  2. **Replay Buffer（エピソード記憶）の強化**: スパイク列を効率的に保存・再生するメカニズムを実装し、低コストでの知識保持を可能にする。  
+  3. **継続学習ベンチマークの実行**: SST-2とMRPCのようなタスクシーケンスで、通常のファインチューニングと比較し、**忘却率の明確な低減**を実証する。  
+* **マイルストーン（Week 52）**: 新タスク学習後の既存タスクの**忘却率を 30%以下に抑制**することを目指す。
 
-## リスクと対策
-- **リスク**: 追加学習で精度が崩れる（忘却）
-  - **対策**: EWC 相当の重要度固定 + replay + adapter 層で局所更新
-- **リスク**: 実機移行時に大幅な精度低下
-  - **対策**: 早期に quantization/delay-aware の PoC を行う
-- **リスク**: スパイク表現が NLP トークンに馴染まない
-  - **対策**: hybrid embedding（ANN 埋め込み → スパイク変換）で橋渡し
+### **フェーズ 5 — ニューロモルフィック統合 & 社会性の創発（Week 52+）**
 
----
+**目的**: SNNの究極的なポテンシャルを解放し、実機への展開と自律的な社会性を実現する。
 
-## 成功定義（Success Criteria）
-1. 短期: CIFAR/ImageNet-subset で ANN 比 ≤ 2%（Week 6）
-2. 中期: 継続学習で忘却率 ≤ 30%（新データ追加後 3 サイクル）
-3. 長期: 実機で J/inference が ANN 比で 2–3x 改善（Month 12）
+* **主要タスク**  
+  1. **Loihi/Akida向け最適化**: モデルをハードウェア固有のフォーマットに変換し、実機で Joules/inference を計測。  
+  2. **イベントベースビジョンへの本格適用**: DVSデータセット（CIFAR10-DVS等）でのSNN4-HybridNetの性能を最大化。  
+  3. **マルチエージェントによる社会学習**: モデルレジストリを拡張し、エージェント間で専門家モデルを共有・ダウンロードできる**スキル交換システム**を構築。
 
----
+## **評価指標（KPI）**
 
-## 次アクション（短く）
-1. Sprint 0 を開始：ベンチセット/teacher を定める（2 週間）
-2. Distillation + ann2snn の PoC を Sprint 1 にアサイン
-3. Sprint 2 でハイパーパラ最適化と結果レポート
+| 指標 | 説明 | フェーズ2目標 | フェーズ4目標 |
+| :---- | :---- | :---- | :---- |
+| **精度** | Top-1/Top-5 Accuracy（各データセット） | ANN比 $\\le 2\\%$ 差 | SNN独自タスクで SOTA |
+| **忘却率** | 新タスク学習後の既存タスク性能低下（%） | \- | $\\le 30\\%$ **抑制** |
+| **エネルギー効率** | **Energy per Inference (mJ) \- 実測** | **ANN比で** $2\\times$ **改善** | **ANN比で** $3\\times$ **改善** |
+| **スパイク効率** | 平均スパイク数 / inference | 最小化 | 最小化 |
+| **レイテンシ** | ms / inference | 最小化 | \< 10ms |
+| **総合指標** | 性能（精度）/ 消費エネルギー 比 | 向上 | 最大化 |
 
+## **次アクション（直ちに着手）**
 
----
-
-_この文書は ROADMAP v10.0 に対する追記であり、既存のゴールや構成を変更することなく「継続学習要素」をスケジュールにブレンドしています。必要であれば、各 Sprint に対する担当者割り当て、見積り (man-weeks)、CI ジョブ設定などさらに詳細化します。_
-
+1. **エネルギー測定ツールの実装**: snn\_research/benchmark/energy\_profiler.py の実装を完了し、CPU/GPUでの電力測定を可能にする。  
+2. **キラーアプリの骨格作成**: applications/edge\_vision/raspberry\_pi/demo.py のセットアップと基本ロジックを確立。  
+3. **コミュニティ基盤の整備**: クイックスタートガイドを完成させ、開発者コミュニティへのアクセスを用意する。
