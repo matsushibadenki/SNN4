@@ -383,7 +383,8 @@ class SpikingCNN(BaseModel):
             for layer in self.features:
                 if isinstance(layer, (AdaptiveLIFNeuron, IzhikevichNeuron)):
                     B_c, C_c, H_c, W_c = x.shape
-                    x, _ = layer(x.permute(0, 2, 3, 1).reshape(-1, C_c))
+                    x = x.permute(0, 2, 3, 1).reshape(-1, C_c)
+                    x, _ = layer(x)
                     x = x.view(B_c, H_c, W_c, C_c).permute(0, 3, 1, 2)
                 else:
                     x = layer(x)
@@ -441,8 +442,29 @@ class SNNCore(nn.Module):
 
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
-        # Pass input_images for image models
-        if self.config.get("architecture_type") in ["hybrid_cnn_snn", "spiking_cnn"]:
-            return self.model(input_images=args[0], **kwargs)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        model_type = self.config.get("architecture_type")
+        
+        # モデルが必要とする入力をkwargsから取得。ない場合はargs[0]にフォールバック。
+        if model_type in ["hybrid_cnn_snn", "spiking_cnn"]:
+            input_data = kwargs.get('input_images')
+            if input_data is None and args and len(args) > 0:
+                input_data = args[0]
+            
+            if input_data is None:
+                # kwargsにinput_imagesがない場合でも、他のkwargs（例: labels）を渡す必要がある
+                return self.model(**kwargs)
+            
+            return self.model(input_images=input_data, **kwargs)
         else:
-            return self.model(input_ids=args[0], **kwargs)
+            # テキストモデルの場合
+            input_data = kwargs.get('input_ids')
+            if input_data is None and args and len(args) > 0:
+                input_data = args[0]
+
+            if input_data is None:
+                # kwargsにinput_idsがない場合でも、他のkwargsを渡す必要がある
+                return self.model(**kwargs)
+                
+            return self.model(input_ids=input_data, **kwargs)
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
