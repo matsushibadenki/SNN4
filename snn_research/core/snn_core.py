@@ -384,20 +384,43 @@ class SpikingCNN(BaseModel):
                 if isinstance(layer, (AdaptiveLIFNeuron, IzhikevichNeuron)):
                     B_c, C_c, H_c, W_c = x.shape
                     x = x.permute(0, 2, 3, 1).reshape(-1, C_c)
-                    # 💡 修正: ニューロンはタプルを返すため、スパイクテンソルのみを抽出
                     spikes, _ = layer(x)
                     x = spikes.view(B_c, H_c, W_c, C_c).permute(0, 3, 1, 2)
                 else:
                     x = layer(x)
+                
+                # 💡 修正: 非ニューロン層の後に続く層がタプルを受け取るのを防ぐため、
+                #         出力がタプルであればスパイク（最初の要素）を抽出
+                if isinstance(x, tuple):
+                    x = x[0]
+
 
             # classifier part
-            for layer in self.classifier:
-                if isinstance(layer, (AdaptiveLIFNeuron, IzhikevichNeuron)):
+            for i, layer in enumerate(self.classifier):
+                
+                # Flatten層はそのまま通過
+                if isinstance(layer, nn.Flatten):
+                    x = layer(x)
+                    continue
+
+                # ニューロン層の処理
+                elif isinstance(layer, (AdaptiveLIFNeuron, IzhikevichNeuron)):
                     # 💡 修正: ニューロンはタプルを返すため、スパイクテンソルのみを抽出
                     spikes, _ = layer(x)
                     x = spikes
-                else:
+                    
+                # 線形層の処理
+                elif isinstance(layer, nn.Linear):
+                    # Linear層への入力はテンソルであるべき
+                    if not isinstance(x, torch.Tensor):
+                         x = cast(torch.Tensor, x) # mypyをなだめる
                     x = layer(x)
+
+                # 💡 修正: 畳み込み層とLinear層の間に挟まれたFlatten層が、
+                #         誤って後続の層にタプルを渡すのを防ぐためのガードを追加。
+                if isinstance(x, tuple):
+                    x = x[0]
+
 
             output_voltages.append(x)
         
@@ -448,7 +471,6 @@ class SNNCore(nn.Module):
 
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         model_type = self.config.get("architecture_type")
         
         # 1. 入力データのキーを特定
@@ -477,4 +499,3 @@ class SNNCore(nn.Module):
             return self.model(input_images=input_data, **forward_kwargs)
         else:
             return self.model(input_ids=input_data, **forward_kwargs)
-        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
