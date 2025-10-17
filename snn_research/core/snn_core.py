@@ -445,26 +445,30 @@ class SNNCore(nn.Module):
         # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         model_type = self.config.get("architecture_type")
         
-        # モデルが必要とする入力をkwargsから取得。ない場合はargs[0]にフォールバック。
-        if model_type in ["hybrid_cnn_snn", "spiking_cnn"]:
-            input_data = kwargs.get('input_images')
-            if input_data is None and args and len(args) > 0:
-                input_data = args[0]
-            
-            if input_data is None:
-                # kwargsにinput_imagesがない場合でも、他のkwargs（例: labels）を渡す必要がある
-                return self.model(**kwargs)
-            
-            return self.model(input_images=input_data, **kwargs)
-        else:
-            # テキストモデルの場合
-            input_data = kwargs.get('input_ids')
-            if input_data is None and args and len(args) > 0:
-                input_data = args[0]
+        # 1. 入力データのキーを特定
+        input_key = 'input_images' if model_type in ["hybrid_cnn_snn", "spiking_cnn"] else 'input_ids'
+        
+        # 2. 入力データ（テンソル）の抽出
+        # kwargsからinput_keyを探す
+        input_data = kwargs.get(input_key)
+        
+        # args[0]にフォールバック（位置引数として渡された場合）
+        if input_data is None and args and len(args) > 0:
+            input_data = args[0]
 
-            if input_data is None:
-                # kwargsにinput_idsがない場合でも、他のkwargsを渡す必要がある
-                return self.model(**kwargs)
-                
-            return self.model(input_ids=input_data, **kwargs)
+        # 3. 内部モデルに渡すkwargsを準備: input_keyは重複を防ぐため削除
+        forward_kwargs = kwargs.copy()
+        if input_key in forward_kwargs:
+            del forward_kwargs[input_key] 
+
+        if input_data is None:
+            # 入力データがない場合、残りのkwargs（例: labels）のみを渡して内部モデルに処理させる
+            return self.model(**forward_kwargs)
+
+
+        # 4. 内部モデルを呼び出し（input_dataをinput_keyとして明示的に渡す）
+        if model_type in ["hybrid_cnn_snn", "spiking_cnn"]:
+            return self.model(input_images=input_data, **forward_kwargs)
+        else:
+            return self.model(input_ids=input_data, **forward_kwargs)
         # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
