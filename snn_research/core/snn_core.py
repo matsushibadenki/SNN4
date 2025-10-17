@@ -384,14 +384,20 @@ class SpikingCNN(BaseModel):
                 if isinstance(layer, (AdaptiveLIFNeuron, IzhikevichNeuron)):
                     B_c, C_c, H_c, W_c = x.shape
                     x = x.permute(0, 2, 3, 1).reshape(-1, C_c)
-                    x, _ = layer(x)
-                    x = x.view(B_c, H_c, W_c, C_c).permute(0, 3, 1, 2)
+                    # 💡 修正: ニューロンはタプルを返すため、スパイクテンソルのみを抽出
+                    spikes, _ = layer(x)
+                    x = spikes.view(B_c, H_c, W_c, C_c).permute(0, 3, 1, 2)
                 else:
                     x = layer(x)
 
             # classifier part
             for layer in self.classifier:
-                x = layer(x)
+                if isinstance(layer, (AdaptiveLIFNeuron, IzhikevichNeuron)):
+                    # 💡 修正: ニューロンはタプルを返すため、スパイクテンソルのみを抽出
+                    spikes, _ = layer(x)
+                    x = spikes
+                else:
+                    x = layer(x)
 
             output_voltages.append(x)
         
