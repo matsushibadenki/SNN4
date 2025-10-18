@@ -281,6 +281,54 @@ class SimpleSNN(BaseModel):
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
         return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
 
+
+# --------------------------
+# Hybrid Adapter Modules (新規追加)
+# --------------------------
+
+class AnalogToSpikes(nn.Module):
+    """
+    ANNのアナログ出力をSNNのスパイク入力に変換するアダプタ。
+    Analog-to-Spikeの学習可能なゲートウェイとして機能する。
+    """
+    def __init__(self, in_features: int, out_features: int, time_steps: int, activation: Type[nn.Module]):
+        super().__init__()
+        self.time_steps = time_steps
+        # アナログ射影層
+        self.projection = nn.Linear(in_features, out_features)
+        # SNNのスパイク生成
+        # NOTE: tau_mem, v_thresholdはneuron_configから渡すべきだが、ここではLIFのデフォルトを使用
+        self.lif_neuron = AdaptiveLIFNeuron(features=out_features, tau_mem=10.0, base_threshold=1.0)
+        self.output_act = activation() # 例: nn.ReLUを想定
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 1. アナログ射影と活性化
+        x = self.projection(x)
+        x = self.output_act(x)
+        
+        # 2. レート符号化 (時間軸を導入)
+        x_repeated = x.unsqueeze(1).repeat(1, self.time_steps, 1)
+        B, T, D = x_repeated.shape
+
+        # 3. SNNコアの起動とスパイク生成
+        # LIF状態をリセットし、時系列で処理
+        self.lif_neuron.set_stateful(True)
+        functional.reset_net(self.lif_neuron)
+
+        spikes_history = []
+        for t in range(T):
+            # アナログ値を入力電流として流す
+            spike, _ = self.lif_neuron(x_repeated[:, t, :])
+            spikes_history.append(spike)
+        
+        self.lif_neuron.set_stateful(False)
+        
+        # output: (B, T, D) のスパイク列
+        return torch.stack(spikes_history, dim=1) 
+
+# ... (SpikingMamba, TinyRecursiveModelなどのクラス定義)
+
+
 class HybridCnnSnnModel(BaseModel):
     def __init__(self, vocab_size: int, time_steps: int, ann_frontend: Dict[str, Any], snn_backend: Dict[str, Any], neuron_config: Dict[str, Any], **kwargs: Any):
         super().__init__()
@@ -292,12 +340,16 @@ class HybridCnnSnnModel(BaseModel):
         else:
             raise ValueError(f"Unsupported ANN frontend: {ann_frontend['name']}")
         
+        # 修正: ANN層も微調整可能にする（ハイブリッド学習のため）
         for param in self.ann_feature_extractor.parameters():
-            param.requires_grad = False
-            
-        self.feature_encoder = nn.Sequential(
-            nn.Linear(ann_frontend['output_features'], snn_backend['d_model']),
-            nn.ReLU()
+             param.requires_grad = True
+
+        # 修正: feature_encoderの代わりにAnalogToSpikesアダプタを使用
+        self.adapter_a2s = AnalogToSpikes(
+            in_features=ann_frontend['output_features'],
+            out_features=snn_backend['d_model'],
+            time_steps=time_steps,
+            activation=nn.ReLU # MobileNetの活性化関数を想定
         )
         
         neuron_type = neuron_config.get("type", "lif")
@@ -309,26 +361,32 @@ class HybridCnnSnnModel(BaseModel):
             STAttenBlock(snn_backend['d_model'], snn_backend['n_head'], neuron_class, neuron_params)
             for _ in range(snn_backend['num_layers'])
         ])
-        
+
         self.output_projection = nn.Linear(snn_backend['d_model'], vocab_size)
         self._init_weights()
         
     def forward(self, input_images: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, C, H, W = input_images.shape
         device = input_images.device
+        functional.reset_net(self) # SNNリセット
 
-        with torch.no_grad():
-            ann_features = self.ann_feature_extractor(input_images)
-            ann_features = ann_features.mean([2, 3])
+        # 1. ANN特徴抽出
+        ann_features = self.ann_feature_extractor(input_images)
+        ann_features = ann_features.mean([2, 3]) 
         
-        encoded_features = self.feature_encoder(ann_features)
-        snn_input = encoded_features.unsqueeze(1).repeat(1, self.time_steps, 1)
+        # 2. Analog -> Spikes 変換 (A2Sアダプタ)
+        snn_input_spikes = self.adapter_a2s(ann_features) 
 
-        x = snn_input
+        # 3. SNNバックエンド処理
+        x = snn_input_spikes
+        # SNNコアの状態をリセット
+        functional.reset_net(self.snn_backend) 
         for layer in self.snn_backend:
             x = layer(x)
             
-        final_features = x[:, -1, :]
+        # 4. Spikes -> Analog デコーディング (時間平均)
+        final_features = x.mean(dim=1)
+        
         logits = self.output_projection(final_features)
         
         total_spikes = self.get_total_spikes()
@@ -337,7 +395,7 @@ class HybridCnnSnnModel(BaseModel):
         mem = torch.tensor(0.0, device=device)
         
         return logits, avg_spikes, mem
-
+        
 class SpikingCNN(BaseModel):
     """
     画像分類用のシンプルなSpiking CNN。SimpleCNNベースラインに対応。
