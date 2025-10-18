@@ -1,4 +1,4 @@
-# ファイルパス: configs/models/tiny_recursive_model.yaml
+# matsushibadenki/snn4/SNN4-5d9343ca008e7e5290e9447f78bae48a4b6e9029/configs/models/tiny_recursive_model.yaml
 # (修正: Tiny Recursive Model (TRM) に基づく設定)
 #
 # Title: Tiny Recursive Model (TRM) 設定
@@ -23,3 +23,7 @@ model:
 
   neuron:
     type: "lif"
+    # --- ▼ 動的閾値パラメータの追加 (TRMの適応能力を向上) ▼ ---
+    threshold_decay: 0.99 
+    threshold_step: 0.05
+    # --- ▲ 動的閾値パラメータの追加 ▲ ---
