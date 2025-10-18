@@ -110,6 +110,7 @@ class TinyRecursiveModel(BaseModel):
         latent_z, answer_y_spikes = initial_state_and_answer.split(self.d_state, dim=-1)
         answer_y = answer_y_spikes # 初期はアナログ値から開始
 
+        # 再帰ブロック内のニューロンをstatefulモードに設定し状態をリセット
         # 修正3: cast(nn.Module, ...) -> cast(Any, ...) に変更し型チェックを回避
         trm_block_neuron = cast(Any, self.recurrent_block.neuron)
         if hasattr(trm_block_neuron, 'set_stateful'):
@@ -155,7 +156,6 @@ class TinyRecursiveModel(BaseModel):
         total_spikes = self.get_total_spikes()
         avg_spikes_val = total_spikes / (L * self.time_steps * B) if return_spikes else 0.0
         
-        # === Mypy エラー最終修正: torch.zeros と fill_ を使用し、Tensor名の衝突を回避 ===
         # 1. avg_spikes を作成 (1要素のスカラーテンソル)
         avg_spikes = torch.zeros(1, dtype=torch.float32, device=device).squeeze()
         avg_spikes.fill_(float(avg_spikes_val))
