@@ -28,3 +28,4 @@ langchain-huggingface
 googlesearch-python
 snntorch
 spikingjelly
+tabulate
