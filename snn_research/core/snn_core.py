@@ -19,10 +19,9 @@ from torchvision import models # type: ignore
 from .base import BaseModel, SNNLayerNorm
 from .neurons import AdaptiveLIFNeuron, IzhikevichNeuron
 from .mamba_core import SpikingMamba
-from .hrm_core import SpikingHRM
+from .trm_core import TinyRecursiveModel
 from . import sntorch_models
 
-# --- (省略: PredictiveCodingLayer, MultiLevelSpikeDrivenSelfAttention, STAttenBlock, etc. は変更なし) ---
 class PredictiveCodingLayer(nn.Module):
     error_mean: torch.Tensor
     error_std: torch.Tensor
@@ -452,7 +451,7 @@ class SNNCore(nn.Module):
                 "predictive_coding": BreakthroughSNN,
                 "spiking_transformer": SpikingTransformer,
                 "spiking_mamba": SpikingMamba,
-                "tiny_recursive_model": TinyRecursiveModel,
+                "tiny_recursive_model": TinyRecursiveModel, # <--- TRMのクラスを使用
                 "simple": SimpleSNN,
                 "hybrid_cnn_snn": HybridCnnSnnModel,
                 "spiking_cnn": SpikingCNN,
@@ -468,7 +467,7 @@ class SNNCore(nn.Module):
             raise ValueError(f"Unknown model type '{model_type}' for backend '{backend}'")
         
         self.model = model_map[model_type](vocab_size=vocab_size, neuron_config=neuron_config, **params)
-
+        
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         model_type = self.config.get("architecture_type")
