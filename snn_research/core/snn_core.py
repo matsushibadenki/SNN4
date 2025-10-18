@@ -452,7 +452,7 @@ class SNNCore(nn.Module):
                 "predictive_coding": BreakthroughSNN,
                 "spiking_transformer": SpikingTransformer,
                 "spiking_mamba": SpikingMamba,
-                "spiking_hrm": SpikingHRM,
+                "tiny_recursive_model": TinyRecursiveModel,
                 "simple": SimpleSNN,
                 "hybrid_cnn_snn": HybridCnnSnnModel,
                 "spiking_cnn": SpikingCNN,
