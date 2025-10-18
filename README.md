@@ -82,6 +82,9 @@ graph TD
 
 pip install \-r requirements.txt
 
+※Mac(Mシリーズ)環境ではPytorchバグ対策のためターミナルで下記を実行してください。
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+
 ### **ステップ2: システム健全性チェック**
 
 プロジェクト全体のユニットテストおよび統合テストを実行し、すべてのコンポーネントが正しく動作することを確認します。
