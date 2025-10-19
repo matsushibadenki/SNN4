@@ -1,4 +1,4 @@
-# /snn_research/cognitive_architecture/planner_snn.py
+# ファイルパス: snn_research/cognitive_architecture/planner_snn.py
 # Phase 3: 学習可能な階層的思考プランナーSNN
 #
 # 機能:
@@ -31,22 +31,25 @@ class PlannerSNN(BreakthroughSNN):
         self.output_projection = nn.Linear(d_state * num_layers, num_skills)
         print(f"🧠 学習可能プランナーSNNが {num_skills} 個のスキルを認識して初期化されました。")
 
+    # 修正: return_full_hiddens 引数を追加
     def forward(
         self, 
         input_ids: torch.Tensor, 
         return_spikes: bool = False,
-        output_hidden_states: bool = False, # 親クラスとの互換性のために追加
+        output_hidden_states: bool = False, 
+        return_full_hiddens: bool = False, # <<-- ADDED
         **kwargs: Any
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         フォワードパスを実行し、スキル予測ロジット、スパイク、膜電位を返す。
         """
         # PlannerSNNは常にスキルロジットを返すことを意図しているため、
-        # super().forward()には output_hidden_states=False を渡してロジットを取得する。
+        # super().forward()には output_hidden_states=False, return_full_hiddens=False を渡してロジットを取得する。
         skill_logits_over_time, spikes, mem = super().forward(
             input_ids, 
             return_spikes=return_spikes, 
-            output_hidden_states=False, # 常にロジットを取得するように指定
+            output_hidden_states=False,
+            return_full_hiddens=False, 
             **kwargs
         )
         
