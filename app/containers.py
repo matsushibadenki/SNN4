@@ -66,6 +66,9 @@ from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
 from snn_research.cognitive_architecture.physics_evaluator import PhysicsEvaluator
 from snn_research.cognitive_architecture.symbol_grounding import SymbolGrounding
 
+from snn_research.learning_rules import ProbabilisticHebbian, get_bio_learning_rule
+from snn_research.core.neurons import ProbabilisticLIFNeuron
+from snn_research.training.bio_trainer import BioRLTrainer
 
 if TYPE_CHECKING:
     from .adapters.snn_langchain_adapter import SNNLangChainAdapter
@@ -224,4 +227,32 @@ class BrainContainer(containers.DeclarativeContainer):
         symbol_grounding=providers.Singleton(SymbolGrounding, rag_system=agent_container.rag_system),
         langchain_adapter=app_container.langchain_adapter,
         global_workspace=global_workspace
+    )
+    
+# --- 確率的ヘブ学習用のコンポーネント ---
+    probabilistic_neuron = providers.Factory(
+        ProbabilisticLIFNeuron,
+        neuron_params=config.training.biologically_plausible.probabilistic_neuron # 新しい設定パス
+    )
+    probabilistic_learning_rule = providers.Factory(
+        ProbabilisticHebbian,
+        **config.training.biologically_plausible.probabilistic_hebbian.to_dict() # 新しい設定パス
+    )
+    probabilistic_model = providers.Factory(
+        BioSNN,
+        layer_sizes=[10, 5, 2], # ダミーのサイズ, 実際にはタスクに応じて設定
+        neuron_params=config.training.biologically_plausible.probabilistic_neuron, # 新しい設定パス
+        learning_rule=probabilistic_learning_rule,
+        sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification
+    )
+    # 既存の BioRLTrainer を流用する例 (必要に応じて専用トレーナーを作成)
+    # 注意: BioRLTrainer は強化学習環境を前提としているため、論文の教師なし学習とは異なる可能性がある
+    probabilistic_trainer = providers.Factory(
+        BioRLTrainer, # または BioProbabilisticTrainer (新規作成)
+        agent=providers.Factory( # Agent も専用のものが必要になる可能性
+            ReinforcementLearnerAgent, # または ProbabilisticHebbianAgent (新規作成)
+            input_size=4, output_size=4, device=device,
+            # model=probabilistic_model # Agent内でモデルを初期化するなら不要
+        ),
+        env=providers.Factory(GridWorldEnv, device=device) # 環境もダミー
     )
