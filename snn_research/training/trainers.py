@@ -3,6 +3,7 @@
 # (省略...)
 # 修正点(v6): 継続学習(EWC)のためのFisher行列計算・保存機能を追加。
 # 改善点(snn_4_ann_parity_plan): EWCデータのロード機能を追加。
+# 修正点(TCL): return_full_hiddensフラグの伝搬とSelfSupervisedTrainerの修正。
 
 import torch
 import torch.nn as nn
@@ -107,10 +108,24 @@ class BreakthroughTrainer:
                     hooks.append(module.register_forward_hook(record_hook))
                     break 
         
+        # 修正: return_full_hiddens を False で渡し、通常のロジット出力を期待する
+        return_full_hiddens_flag = isinstance(self.criterion, SelfSupervisedLoss)
+        
         with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
             with torch.set_grad_enabled(is_train):
-                logits, spikes, mem = self.model(input_ids, return_spikes=True, return_full_mems=True)
-                loss_dict = self.criterion(logits, target_ids, spikes, mem, self.model)
+                # outputs: (logits/hiddens, spikes, mem) のタプルを期待
+                outputs = self.model(input_ids, return_spikes=True, return_full_mems=True, return_full_hiddens=return_full_hiddens_flag)
+                
+                logits_or_hiddens, spikes, mem = outputs
+                
+                if return_full_hiddens_flag:
+                    # SelfSupervisedLossの場合は、hiddensを最初の引数として渡す
+                    loss_dict = self.criterion(logits_or_hiddens, target_ids, spikes, mem, self.model)
+                    logits = None # ロジットは存在しない
+                else:
+                    # 通常の損失の場合は、logitsを最初の引数として渡す
+                    logits = logits_or_hiddens
+                    loss_dict = self.criterion(logits, target_ids, spikes, mem, self.model)
         
         for hook in hooks:
             hook.remove()
@@ -133,30 +148,38 @@ class BreakthroughTrainer:
             if self.meta_cognitive_snn:
                 end_time = time.time()
                 computation_time = end_time - start_time
-                with torch.no_grad():
-                    preds = torch.argmax(logits, dim=-1)
-                    if hasattr(self.criterion, 'ce_loss_fn') and hasattr(self.criterion.ce_loss_fn, 'ignore_index'):
-                        ignore_idx = self.criterion.ce_loss_fn.ignore_index
-                        mask = target_ids != ignore_idx
-                        num_masked_elements = cast(torch.Tensor, mask).sum()
-                        accuracy = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
-                        loss_dict['accuracy'] = accuracy.item()
+                
+                accuracy = 0.0 # SelfSupervisedLossでは意味がないため0.0
+                if logits is not None:
+                    with torch.no_grad():
+                        preds = torch.argmax(logits, dim=-1)
+                        if hasattr(self.criterion, 'ce_loss_fn') and hasattr(self.criterion.ce_loss_fn, 'ignore_index'):
+                            ignore_idx = self.criterion.ce_loss_fn.ignore_index
+                            mask = target_ids != ignore_idx
+                            num_masked_elements = cast(torch.Tensor, mask).sum()
+                            accuracy = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
+                            accuracy = accuracy.item()
+                    
+                loss_dict['accuracy'] = accuracy
                 
                 self.meta_cognitive_snn.update_metadata(
                     loss=loss_dict['total'].item(),
                     computation_time=computation_time,
                     accuracy=loss_dict.get('accuracy', 0.0)
                 )
+        else:
+            with torch.no_grad():
+                accuracy = 0.0
+                if logits is not None:
+                    if 'accuracy' not in loss_dict:
+                        preds = torch.argmax(logits, dim=-1)
+                        if hasattr(self.criterion, 'ce_loss_fn') and hasattr(self.criterion.ce_loss_fn, 'ignore_index'):
+                            ignore_idx = self.criterion.ce_loss_fn.ignore_index
+                            mask = target_ids != ignore_idx
+                            num_masked_elements = cast(torch.Tensor, mask).sum()
+                            accuracy = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
+                            loss_dict['accuracy'] = accuracy
 
-        with torch.no_grad():
-            if 'accuracy' not in loss_dict:
-                preds = torch.argmax(logits, dim=-1)
-                if hasattr(self.criterion, 'ce_loss_fn') and hasattr(self.criterion.ce_loss_fn, 'ignore_index'):
-                    ignore_idx = self.criterion.ce_loss_fn.ignore_index
-                    mask = target_ids != ignore_idx
-                    num_masked_elements = cast(torch.Tensor, mask).sum()
-                    accuracy = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
-                    loss_dict['accuracy'] = accuracy
 
         return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
@@ -309,7 +332,10 @@ class DistillationTrainer(BreakthroughTrainer):
 
         with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
             with torch.set_grad_enabled(is_train):
-                student_logits, spikes, mem = self.model(student_input, return_spikes=True, return_full_mems=True)
+                # 修正: return_full_hiddens を False で渡し、通常のロジット出力を期待する
+                outputs = self.model(student_input, return_spikes=True, return_full_mems=True, return_full_hiddens=False)
+                
+                student_logits, spikes, mem = outputs
                 
                 assert isinstance(self.criterion, DistillationLoss)
                 loss_dict = self.criterion(
@@ -339,8 +365,50 @@ class DistillationTrainer(BreakthroughTrainer):
         
         return {k: v.cpu().item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
+# 修正: SelfSupervisedTrainer の _run_step を修正
 class SelfSupervisedTrainer(BreakthroughTrainer):
-    pass
+    def _run_step(self, batch: Tuple[torch.Tensor, ...], is_train: bool) -> Dict[str, Any]:
+        functional.reset_net(self.model)
+        start_time = time.time()
+        if is_train:
+            self.model.train()
+        else:
+            self.model.eval()
+
+        input_ids, target_ids = [t.to(self.device) for t in batch[:2]]
+        
+        # SelfSupervisedLoss (TCL) は full_hiddens を必要とするため、Trueで呼び出す
+        with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
+            with torch.set_grad_enabled(is_train):
+                # outputs: (full_hiddens, spikes, mem) のタプルを期待
+                outputs = self.model(input_ids, return_spikes=True, return_full_mems=True, return_full_hiddens=True)
+                
+                full_hiddens, spikes, mem = outputs
+                
+                assert isinstance(self.criterion, SelfSupervisedLoss)
+                # full_hiddens を損失関数に渡す
+                loss_dict = self.criterion(full_hiddens, target_ids, spikes, mem, self.model)
+        
+        # 以下のロジックはBreakthroughTrainerと同じだが、logitsが存在しないため注意
+        if is_train:
+            self.optimizer.zero_grad()
+            if self.use_amp:
+                self.scaler.scale(loss_dict['total']).backward()
+                if self.grad_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss_dict['total'].backward()
+                if self.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
+                self.optimizer.step()
+
+        # TCLではAccuracyは意味がないため、計算をスキップし0.0として返す
+        loss_dict['accuracy'] = 0.0 
+
+        return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
 class PhysicsInformedTrainer(BreakthroughTrainer):
     def _run_step(self, batch: Tuple[torch.Tensor, ...], is_train: bool) -> Dict[str, Any]:
@@ -352,9 +420,11 @@ class PhysicsInformedTrainer(BreakthroughTrainer):
 
         input_ids, target_ids = [t.to(self.device) for t in batch[:2]]
         
+        # 修正: return_full_hiddens を False で渡し、通常のロジット出力を期待する
         with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
             with torch.set_grad_enabled(is_train):
-                logits, spikes, mem_sequence = self.model(input_ids, return_spikes=True, return_full_mems=True)
+                outputs = self.model(input_ids, return_spikes=True, return_full_mems=True, return_full_hiddens=False)
+                logits, spikes, mem_sequence = outputs
                 loss_dict = self.criterion(logits, target_ids, spikes, mem_sequence, self.model)
         
         if is_train:
@@ -402,7 +472,9 @@ class ProbabilisticEnsembleTrainer(BreakthroughTrainer):
             functional.reset_net(self.model)
             with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
                 with torch.set_grad_enabled(is_train):
-                    logits, _, _ = self.model(input_ids, return_spikes=True, return_full_mems=True)
+                    # 修正: return_full_hiddens を False で渡し、通常のロジット出力を期待する
+                    outputs = self.model(input_ids, return_spikes=True, return_full_mems=True, return_full_hiddens=False)
+                    logits, _, _ = outputs
                     ensemble_logits.append(logits)
         
         ensemble_logits_tensor = torch.stack(ensemble_logits)
