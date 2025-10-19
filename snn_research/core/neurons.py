@@ -191,3 +191,82 @@ class IzhikevichNeuron(base.MemoryModule):
         self.v = torch.clamp(self.v, min=-100.0, max=50.0)
 
         return spike, self.v
+        
+class ProbabilisticLIFNeuron(base.MemoryModule):
+    """
+    確率的にスパイクを生成する Leaky Integrate-and-Fire (LIF) ニューロン。
+    論文 arXiv:2509.26507v1 のアイデアに基づく。
+    """
+    def __init__(
+        self,
+        features: int,
+        tau_mem: float = 20.0,
+        threshold: float = 1.0,
+        temperature: float = 0.5, # スパイク確率の鋭敏さを制御
+        noise_intensity: float = 0.0,
+    ):
+        super().__init__()
+        self.features = features
+        self.mem_decay = math.exp(-1.0 / tau_mem)
+        self.threshold = threshold
+        self.temperature = temperature # 確率計算の温度パラメータ
+        self.noise_intensity = noise_intensity
+
+        self.register_buffer("mem", None)
+        self.register_buffer("spikes", torch.zeros(features))
+        self.register_buffer("total_spikes", torch.tensor(0.0))
+        self.stateful = False
+
+    def set_stateful(self, stateful: bool):
+        """時系列データの処理モードを設定"""
+        self.stateful = stateful
+        if not stateful:
+            self.reset()
+
+    def reset(self):
+        """Resets the neuron's state variables."""
+        super().reset()
+        self.mem = None
+        self.spikes.zero_()
+        self.total_spikes.zero_()
+
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+        """Processes one timestep of input current and generates probabilistic spikes."""
+        if not self.stateful:
+            self.mem = None
+
+        if self.mem is None or self.mem.shape != x.shape:
+            self.mem = torch.zeros_like(x)
+
+        # 1. 膜電位の更新 (LIFダイナミクス)
+        self.mem = self.mem * self.mem_decay + x
+
+        # 2. オプション: ノイズの追加
+        if self.training and self.noise_intensity > 0:
+            self.mem += torch.randn_like(self.mem) * self.noise_intensity
+
+        # 3. 確率的スパイク生成
+        # 膜電位と閾値の差に基づいてスパイク確率を計算 (シグモイド関数を使用)
+        spike_prob = torch.sigmoid((self.mem - self.threshold) / self.temperature)
+
+        # 確率に基づいてスパイクを生成 (ベルヌーイ試行)
+        # torch.rand_likeで生成した乱数が確率以下ならスパイク (1.0)、そうでなければスパイクしない (0.0)
+        spike = (torch.rand_like(self.mem) < spike_prob).float()
+
+        self.spikes = spike.mean(dim=0) if spike.ndim > 1 else spike
+
+        with torch.no_grad():
+            self.total_spikes += spike.detach().sum()
+
+        # 4. リセット (スパイクした場合のみ)
+        # Note: 確率的モデルではリセットの扱いについて論文の詳細が必要
+        # ここでは簡易的に、スパイクしたら膜電位をリセットする
+        reset_mask = spike.detach()
+        self.mem = self.mem * (1.0 - reset_mask)
+
+        return spike, self.mem
+
+    def get_spike_rate_loss(self) -> torch.Tensor:
+        """確率的モデルではターゲットスパイク率の損失は通常適用しないが、互換性のために残す"""
+        # (オプション) 発火確率の平均を制御するような損失も考えられる
+        return torch.tensor(0.0, device=self.spikes.device)
