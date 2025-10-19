@@ -4,6 +4,7 @@
 # 修正点(v6): 継続学習(EWC)のためのFisher行列計算・保存機能を追加。
 # 改善点(snn_4_ann_parity_plan): EWCデータのロード機能を追加。
 # 修正点(TCL): return_full_hiddensフラグの伝搬とSelfSupervisedTrainerの修正。
+# 修正点(mypy): Tensor型とfloat型の代入不一致エラーを解消。
 
 import torch
 import torch.nn as nn
@@ -108,7 +109,7 @@ class BreakthroughTrainer:
                     hooks.append(module.register_forward_hook(record_hook))
                     break 
         
-        # 修正: return_full_hiddens を False で渡し、通常のロジット出力を期待する
+        # SelfSupervisedLoss の場合は full_hiddens を要求
         return_full_hiddens_flag = isinstance(self.criterion, SelfSupervisedLoss)
         
         with torch.amp.autocast(device_type=self.device if self.device != 'mps' else 'cpu', enabled=self.use_amp):
@@ -149,7 +150,7 @@ class BreakthroughTrainer:
                 end_time = time.time()
                 computation_time = end_time - start_time
                 
-                accuracy = 0.0 # SelfSupervisedLossでは意味がないため0.0
+                accuracy_val = 0.0
                 if logits is not None:
                     with torch.no_grad():
                         preds = torch.argmax(logits, dim=-1)
@@ -157,19 +158,18 @@ class BreakthroughTrainer:
                             ignore_idx = self.criterion.ce_loss_fn.ignore_index
                             mask = target_ids != ignore_idx
                             num_masked_elements = cast(torch.Tensor, mask).sum()
-                            accuracy = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
-                            accuracy = accuracy.item()
+                            accuracy_tensor = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
+                            accuracy_val = accuracy_tensor.item()
+                            loss_dict['accuracy'] = accuracy_tensor # Tensorを保存
                     
-                loss_dict['accuracy'] = accuracy
-                
                 self.meta_cognitive_snn.update_metadata(
                     loss=loss_dict['total'].item(),
                     computation_time=computation_time,
-                    accuracy=loss_dict.get('accuracy', 0.0)
+                    accuracy=accuracy_val # floatを渡す
                 )
         else:
             with torch.no_grad():
-                accuracy = 0.0
+                accuracy_tensor = torch.tensor(0.0, device=self.device)
                 if logits is not None:
                     if 'accuracy' not in loss_dict:
                         preds = torch.argmax(logits, dim=-1)
@@ -177,10 +177,18 @@ class BreakthroughTrainer:
                             ignore_idx = self.criterion.ce_loss_fn.ignore_index
                             mask = target_ids != ignore_idx
                             num_masked_elements = cast(torch.Tensor, mask).sum()
-                            accuracy = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
-                            loss_dict['accuracy'] = accuracy
-
-
+                            accuracy_tensor = (preds[mask] == target_ids[mask]).float().sum() / num_masked_elements if num_masked_elements > 0 else torch.tensor(0.0)
+                            loss_dict['accuracy'] = accuracy_tensor # Tensorを保存
+                else:
+                    loss_dict['accuracy'] = accuracy_tensor # float(0.0)をTensorとして保存
+                
+                # floatに変換してから返す (最後のreturn文で自動変換される)
+                if 'accuracy' in loss_dict and isinstance(loss_dict['accuracy'], torch.Tensor):
+                    pass
+                else:
+                    loss_dict['accuracy'] = torch.tensor(loss_dict.get('accuracy', 0.0), device=self.device) # 安全なTensor化
+        
+        # 最終的な返却値ではTensorは.item()でfloatに変換される
         return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
     def train_epoch(self, dataloader: DataLoader, epoch: int) -> Dict[str, float]:
@@ -406,7 +414,7 @@ class SelfSupervisedTrainer(BreakthroughTrainer):
                 self.optimizer.step()
 
         # TCLではAccuracyは意味がないため、計算をスキップし0.0として返す
-        loss_dict['accuracy'] = 0.0 
+        loss_dict['accuracy'] = torch.tensor(0.0, device=self.device) # Tensorとして保存
 
         return {k: v.item() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
 
