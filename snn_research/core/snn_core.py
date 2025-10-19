@@ -6,6 +6,7 @@
 # 改善(v2): snn_4_ann_parity_plan Step 2.5 に基づき、Hybrid CNN-SNNモデルを追加。
 # 改善(v3): MultiLevelSpikeDrivenSelfAttentionのスパース化を、より洗練された微分可能なゲーティングに変更。
 # 改善(v4): snnTorchバックエンドに対応するためのファクトリ機能を強化。
+# 改善(TCL): forwardメソッドにreturn_full_hiddens引数を追加し、全タイムステップの埋め込み表現を返すように修正。
 
 import torch
 import torch.nn as nn
@@ -175,7 +176,8 @@ class BreakthroughSNN(BaseModel):
         self.output_projection = nn.Linear(d_state * num_layers, vocab_size)
         self._init_weights()
 
-    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # 修正: return_full_hiddens 引数を追加
+    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, return_full_hiddens: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
         token_emb = self.token_embedding(input_ids)
@@ -193,10 +195,16 @@ class BreakthroughSNN(BaseModel):
                 sequence_outputs.append(torch.cat(states, dim=1))
             all_timestep_outputs.append(torch.stack(sequence_outputs, dim=1))
         
-        final_hidden_states = all_timestep_outputs[-1]
+        # TCLのために全時間ステップの隠れ状態を結合
+        full_hiddens = torch.stack(all_timestep_outputs, dim=2) # (B, S, T, D)
         
+        final_hidden_states = all_timestep_outputs[-1] # 最終時間ステップのシーケンス
+
         if output_hidden_states:
              output = final_hidden_states
+        # TCLのために全時間ステップの隠れ状態を返す
+        elif return_full_hiddens:
+             return full_hiddens, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
         else:
              output = self.output_projection(final_hidden_states)
         
@@ -223,7 +231,8 @@ class SpikingTransformer(BaseModel):
         self.output_projection = nn.Linear(d_model, vocab_size)
         self._init_weights()
 
-    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # 修正: return_full_hiddens 引数を追加
+    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, return_full_hiddens: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
         x = self.token_embedding(input_ids)
@@ -235,10 +244,17 @@ class SpikingTransformer(BaseModel):
             cast(base.MemoryModule, block.lif2).set_stateful(True)
             cast(base.MemoryModule, block.lif3).set_stateful(True)
 
+        full_hiddens_list = []
         for _ in range(self.time_steps):
             for layer in self.layers:
                 x = layer(x)
+            
+            # 各時間ステップの出力を記録
+            full_hiddens_list.append(x)
         
+        # TCLのために全時間ステップの隠れ状態を結合
+        full_hiddens = torch.stack(full_hiddens_list, dim=2) # (B, S, T, D)
+
         for layer in self.layers:
             block = cast(STAttenBlock, layer)
             cast(base.MemoryModule, block.lif1).set_stateful(False)
@@ -249,6 +265,9 @@ class SpikingTransformer(BaseModel):
         
         if output_hidden_states:
             output = x_normalized
+        # TCLのために全時間ステップの隠れ状態を返す
+        elif return_full_hiddens:
+             return full_hiddens, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
         else:
             output = self.output_projection(x_normalized)
         
@@ -266,7 +285,8 @@ class SimpleSNN(BaseModel):
         self.fc2 = nn.Linear(hidden_size, vocab_size)
         self._init_weights()
 
-    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # 修正: return_full_hiddens 引数を追加
+    def forward(self, input_ids: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, return_full_hiddens: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T = input_ids.shape
         x = self.embedding(input_ids)
         outputs = []
@@ -280,7 +300,6 @@ class SimpleSNN(BaseModel):
         avg_spikes_val = self.get_total_spikes() / (B * T) if return_spikes else 0.0
         avg_spikes = torch.tensor(avg_spikes_val, device=input_ids.device)
         return logits, avg_spikes, torch.tensor(0.0, device=input_ids.device)
-
 
 # --------------------------
 # Hybrid Adapter Modules (新規追加)
@@ -326,9 +345,6 @@ class AnalogToSpikes(nn.Module):
         # output: (B, T, D) のスパイク列
         return torch.stack(spikes_history, dim=1) 
 
-# ... (SpikingMamba, TinyRecursiveModelなどのクラス定義)
-
-
 class HybridCnnSnnModel(BaseModel):
     def __init__(self, vocab_size: int, time_steps: int, ann_frontend: Dict[str, Any], snn_backend: Dict[str, Any], neuron_config: Dict[str, Any], **kwargs: Any):
         super().__init__()
@@ -365,7 +381,8 @@ class HybridCnnSnnModel(BaseModel):
         self.output_projection = nn.Linear(snn_backend['d_model'], vocab_size)
         self._init_weights()
         
-    def forward(self, input_images: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # 修正: return_full_hiddens 引数を追加
+    def forward(self, input_images: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, return_full_hiddens: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, C, H, W = input_images.shape
         device = input_images.device
         functional.reset_net(self) # SNNリセット
@@ -381,12 +398,20 @@ class HybridCnnSnnModel(BaseModel):
         x = snn_input_spikes
         # SNNコアの状態をリセット
         functional.reset_net(self.snn_backend) 
+        full_hiddens_list = []
         for layer in self.snn_backend:
             x = layer(x)
+            full_hiddens_list.append(x)
+            
+        # TCLのために全時間ステップの隠れ状態を結合
+        full_hiddens = torch.stack(full_hiddens_list, dim=2) # (B, S, T, D)
             
         # 4. Spikes -> Analog デコーディング (時間平均)
         final_features = x.mean(dim=1)
         
+        if return_full_hiddens:
+             return full_hiddens, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
+             
         logits = self.output_projection(final_features)
         
         total_spikes = self.get_total_spikes()
@@ -395,7 +420,7 @@ class HybridCnnSnnModel(BaseModel):
         mem = torch.tensor(0.0, device=device)
         
         return logits, avg_spikes, mem
-        
+
 class SpikingCNN(BaseModel):
     """
     画像分類用のシンプルなSpiking CNN。SimpleCNNベースラインに対応。
@@ -427,12 +452,15 @@ class SpikingCNN(BaseModel):
         )
         self._init_weights()
 
-    def forward(self, input_images: torch.Tensor, return_spikes: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # 修正: return_full_hiddens 引数を追加
+    def forward(self, input_images: torch.Tensor, return_spikes: bool = False, output_hidden_states: bool = False, return_full_hiddens: bool = False, **kwargs: Any) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, C, H, W = input_images.shape
         device = input_images.device
         functional.reset_net(self)
         
         output_voltages = []
+        full_hiddens_list = [] # TCLのために層の出力を記録
+
         for _ in range(self.time_steps):
             x = input_images
             
@@ -450,7 +478,8 @@ class SpikingCNN(BaseModel):
                 #         出力がタプルであればスパイク（最初の要素）を抽出
                 if isinstance(x, tuple):
                     x = x[0]
-
+            
+            full_hiddens_list.append(x.mean(dim=[2, 3])) # 特徴マップを空間平均して埋め込み表現として記録
 
             # classifier part
             for i, layer in enumerate(self.classifier):
@@ -481,6 +510,12 @@ class SpikingCNN(BaseModel):
 
             output_voltages.append(x)
         
+        # TCLのために全時間ステップの隠れ状態を結合
+        full_hiddens = torch.stack(full_hiddens_list, dim=2) # (B, S=1, T, D)
+
+        if return_full_hiddens:
+             return full_hiddens, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
+
         final_logits = torch.stack(output_voltages, dim=0).mean(dim=0)
         
         total_spikes = self.get_total_spikes()
