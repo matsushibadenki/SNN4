@@ -89,6 +89,14 @@ training:
     causal_trace:
       tau_eligibility: 150.0
       learning_rate: 0.01
+    probabilistic_neuron: # 確率的ニューロン用の新しいセクション
+      tau_mem: 15.0
+      threshold: 0.8
+      temperature: 0.6 # 確率計算の温度パラメータ
+      noise_intensity: 0.05 # オプションのノイズ強度
+    probabilistic_hebbian: # 確率的ヘブ学習用の新しいセクション
+      learning_rate: 0.002
+      weight_decay: 0.00005 # 重み減衰
 
   self_supervised:
     learning_rate: 0.0008
