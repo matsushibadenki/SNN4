@@ -41,7 +41,6 @@ training:
     learning_rate: 0.001
     use_scheduler: true
     grad_clip_norm: 1.0
-    warmup_epochs: 1
     use_amp: true
     loss:
       ce_weight: 1.0
@@ -98,10 +97,12 @@ training:
     warmup_epochs: 1
     use_amp: true
     loss:
-      prediction_weight: 1.0
+      prediction_weight: 0.0     # TCL導入のため、従来の損失の重みを0に設定
       spike_reg_weight: 0.01
       sparsity_reg_weight: 0.0
       mem_reg_weight: 0.0000001
+      tcl_weight: 1.0            # Temporal Contrastive Lossの重み
+      tcl_temperature: 0.1       # TCLの温度パラメータ
 
   physics_informed:
     learning_rate: 0.0005
