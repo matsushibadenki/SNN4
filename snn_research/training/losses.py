@@ -1,6 +1,5 @@
 # ファイルパス: snn_research/training/losses.py
 # (更新)
-# 改善点: 学習初期段階での妨げとなる可能性があるmem_reg_lossを無効化。
 # 改善点(v2): 継続学習のためのElastic Weight Consolidation (EWC) 損失を追加。
 # 改善点(v3): スパース性を促す正則化項(sparsity_reg_weight)を追加し,汎化性能を向上。
 # 改善点(snn_4_ann_parity_plan):
@@ -8,6 +7,7 @@
 #   (temporal_compression_weight)を追加。
 # - Spiking Transformerの自己注意メカニズムのスパース性を適応的に学習させるための
 #   正則化項(sparsity_threshold_reg_weight)を追加。
+# 改善点(TCL): SelfSupervisedLossをTemporal Contrastive Loss (TCL)に再実装。
 
 import torch
 import torch.nn as nn
@@ -183,37 +183,89 @@ class DistillationLoss(nn.Module):
             'sparsity_threshold_reg_loss': sparsity_threshold_reg_loss
         }
         
+# 修正: SelfSupervisedLossをTemporal Contrastive Learning (TCL)に再実装
 class SelfSupervisedLoss(nn.Module):
     """
-    時間的自己教師あり学習のための損失関数。
+    Temporal Contrastive Learning (TCL)のための損失関数。
+    時間的に隣接する隠れ状態をポジティブペアとして学習する。
     """
-    def __init__(self, prediction_weight: float, spike_reg_weight: float, mem_reg_weight: float, tokenizer: PreTrainedTokenizerBase, target_spike_rate: float = 0.02, **kwargs):
+    def __init__(self, prediction_weight: float, spike_reg_weight: float, mem_reg_weight: float, tokenizer: PreTrainedTokenizerBase, target_spike_rate: float = 0.02, tcl_weight: float = 1.0, tcl_temperature: float = 0.1, **kwargs):
         super().__init__()
-        pad_id = tokenizer.pad_token_id
-        self.prediction_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
+        # prediction_weightは従来の予測損失に相当するが、TCLでは使用しないことが多い
         self.weights = {
             'prediction': prediction_weight,
             'spike_reg': spike_reg_weight,
-            'mem_reg': mem_reg_weight
+            'mem_reg': mem_reg_weight,
+            'tcl': tcl_weight
         }
+        self.tcl_temperature = tcl_temperature
         self.target_spike_rate = target_spike_rate
+        # InfoNCE損失に相当する計算にはnn.CrossEntropyLossを転用 (logitsを計算すれば良い)
+        # ここでは便宜上、予測損失の名称を再利用する
+        pad_id = tokenizer.pad_token_id
+        self.prediction_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor, spikes: torch.Tensor, mem: torch.Tensor, model: nn.Module, **kwargs) -> dict:
-        prediction_loss = self.prediction_loss_fn(logits.view(-1, logits.size(-1)), targets.view(-1))
+    def forward(self, full_hiddens: torch.Tensor, targets: torch.Tensor, spikes: torch.Tensor, mem: torch.Tensor, model: nn.Module, **kwargs) -> dict:
+        # full_hiddens: (B, S, T, D) -> Batch, Sequence Length, Time Steps, Dimension
+        B, S, T, D = full_hiddens.shape
         
+        # 1. Temporal Contrastive Loss (TCL)
+        # 埋め込み表現をフラット化: (B * S * T) x D
+        hiddens_flat = full_hiddens.permute(0, 1, 2, 3).reshape(B * S * T, D)
+        
+        # L2正規化
+        hiddens_norm = F.normalize(hiddens_flat, p=2, dim=1)
+        
+        # ポジティブ/ネガティブペアの定義 (時間軸で)
+        # アンカー: h_t (時間ステップ 0から T-2 まで)
+        # ポジティブ: h_{t+1} (時間ステップ 1から T-1 まで)
+        # TCLは時間軸での相関を学習するため、Sequence-Time軸をフラット化して扱う
+        
+        # Sequence-Time軸を結合: (B * S) x T x D
+        hiddens_st = full_hiddens.reshape(B * S, T, D)
+        
+        # アンカー (h_t): 0からT-2まで
+        anchors = hiddens_st[:, :-1, :].reshape(-1, D)
+        # ポジティブ (h_{t+1}): 1からT-1まで
+        positives = hiddens_st[:, 1:, :].reshape(-1, D)
+        
+        # スパイクの平均レートも利用して、padされたトークンを無視するマスクを生成
+        valid_mask = (targets != self.prediction_loss_fn.ignore_index).view(-1, S)[:, :-1].reshape(-1) # targetsの形状に注意
+
+        # 類似度行列 (すべての埋め込み表現間のコサイン類似度)
+        similarity_matrix = torch.matmul(anchors, hiddens_norm.T) / self.tcl_temperature
+        
+        # ポジティブペアのインデックスを特定
+        # anchor i のポジティブペアは i 番目の positive
+        positive_indices = torch.arange(anchors.size(0), device=anchors.device)
+
+        # InfoNCE損失 (InfoNCE-Loss)
+        # 正しいペア (ポジティブ) のスコアが、他のスコアよりも高い確率になるように
+        # log_softmax (logits) の結果から、正しいインデックスの項を取り出す
+        tcl_loss_unmasked = F.cross_entropy(similarity_matrix, positive_indices, reduction='none')
+        
+        # 有効なトークンのみの損失を計算
+        tcl_loss = (tcl_loss_unmasked * valid_mask.float()).sum() / valid_mask.sum().clamp(min=1)
+
+
+        # 2. 正則化項 (TCLはメイン損失なので、予測損失は無視)
         spike_rate = spikes.mean()
-        spike_reg_loss = F.mse_loss(spike_rate, torch.tensor(self.target_spike_rate, device=spike_rate.device))
+        target_spike_rate = torch.tensor(self.target_spike_rate, device=spikes.device)
+        spike_reg_loss = F.mse_loss(spike_rate, target_spike_rate)
         
         mem_reg_loss = torch.mean(mem**2)
         
-        total_loss = (self.weights['prediction'] * prediction_loss + 
+        # 3. 合計損失
+        total_loss = (self.weights['tcl'] * tcl_loss + 
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['mem_reg'] * mem_reg_loss)
         
         return {
-            'total': total_loss, 'prediction_loss': prediction_loss,
+            'total': total_loss, 
+            'tcl_loss': tcl_loss, # TCL損失を明示
             'spike_reg_loss': spike_reg_loss, 
-            'mem_reg_loss': mem_reg_loss, 'spike_rate': spike_rate
+            'mem_reg_loss': mem_reg_loss, 
+            'spike_rate': spike_rate
         }
 
 
