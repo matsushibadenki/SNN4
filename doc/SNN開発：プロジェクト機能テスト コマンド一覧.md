@@ -44,6 +44,23 @@ python snn-cli.py gradient-train \\
     \--model\_config configs/models/medium.yaml \\  
     \--data\_path data/sample\_data.jsonl \\  
     \--override\_config "training.epochs=5"
+    
+# Spiking Transformerで学習
+python snn-cli.py gradient-train \
+    --model_config configs/models/spiking_transformer.yaml \
+    --data_path data/sample_data.jsonl \
+    --override_config "training.epochs=10" \
+    --override_config "training.log_dir=runs/transformer_test"
+    
+# Spiking Mambaで学習
+python snn-cli.py gradient-train \
+    --model_config configs/models/spiking_mamba.yaml \
+    --data_path data/sample_data.jsonl \
+    --override_config "training.epochs=10" \
+    --override_config "training.log_dir=runs/mamba_test"
+    
+    
+    
 
 ### **3.3. 📊 性能評価と効率検証**
 
@@ -61,6 +78,15 @@ python snn-cli.py benchmark run \\
     \--experiment cifar10\_comparison \\  
     \--epochs 1 \\  
     \--tag "Energy\_Proof"
+    
+    
+# CIFAR-10での比較
+python snn-cli.py benchmark run --experiment cifar10_comparison --epochs 5 --tag "AccuracyTest_CIFAR10"
+
+# SST-2 (感情分析) での比較
+python snn-cli.py benchmark run --experiment sst2_comparison --epochs 5 --tag "AccuracyTest_SST2"
+
+
 
 ### **3.4. 🤖 自律的知能の実行**
 
@@ -82,6 +108,24 @@ python snn-cli.py brain \--loop
 
 \# 単一の入力で実行  
 python snn-cli.py brain \--prompt "エラーが発生した。対応策を考えよ。"
+
+
+
+**ANNモデルをSNNに変換の使用例:**
+python snn-cli.py convert ann2snn-cnn \
+    --ann-model-path runs/ann_cifar_baseline/cifar10/best_model.pth \
+    --snn-model-config configs/cifar10_spikingcnn_config.yaml \
+    --output-snn-path runs/converted/spiking_cnn_from_ann.pth
+
+
+**知識蒸留の効果検証の使用例:**
+
+# 知識蒸留を実行
+python run_distillation.py \
+    --task your_distillation_task \
+    --teacher_model resnet18 \
+    --model_config configs/cifar10_spikingcnn_config.yaml \
+    --config configs/distillation_config.yaml # 蒸留用の設定ファイルを用意
 
 ### **3.5. 🖥️ UIとデプロイ**
 
