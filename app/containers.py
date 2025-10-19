@@ -2,6 +2,7 @@
 # (修正)
 # - mypyエラー[no-redef]を解消するため、重複していたBrainContainerの定義を統合。
 # - mypyエラー[name-defined]を解消するため、コンテナ間の参照を修正。
+# - mypyエラー[name-defined] (BrainContainer内) を解消するため、agent_container経由でdeviceを参照するように修正。
 
 import torch
 from dependency_injector import containers, providers
@@ -9,7 +10,7 @@ from torch.optim import AdamW, Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, LRScheduler
 from transformers import AutoTokenizer
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Any # Dict, Any を追加
 
 # --- プロジェクト内モジュールのインポート ---
 from snn_research.core.snn_core import SNNCore
@@ -29,9 +30,13 @@ from snn_research.cognitive_architecture.meta_cognitive_snn import MetaCognitive
 from snn_research.cognitive_architecture.planner_snn import PlannerSNN
 from .services.chat_service import ChatService
 from .adapters.snn_langchain_adapter import SNNLangChainAdapter
-from snn_research.distillation.model_registry import SimpleModelRegistry, DistributedModelRegistry
+from snn_research.distillation.model_registry import SimpleModelRegistry, DistributedModelRegistry, ModelRegistry # ModelRegistryを追加
 from snn_research.tools.web_crawler import WebCrawler
 
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓追加開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+from snn_research.learning_rules import ProbabilisticHebbian, get_bio_learning_rule, BioLearningRule # BioLearningRuleを追加
+from snn_research.core.neurons import ProbabilisticLIFNeuron
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑追加終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 from snn_research.learning_rules.causal_trace import CausalTraceCreditAssignment
 from snn_research.bio_models.simple_network import BioSNN
 from snn_research.rl_env.grid_world import GridWorldEnv
@@ -66,9 +71,6 @@ from snn_research.agent.self_evolving_agent import SelfEvolvingAgent
 from snn_research.cognitive_architecture.physics_evaluator import PhysicsEvaluator
 from snn_research.cognitive_architecture.symbol_grounding import SymbolGrounding
 
-from snn_research.learning_rules import ProbabilisticHebbian, get_bio_learning_rule
-from snn_research.core.neurons import ProbabilisticLIFNeuron
-from snn_research.training.bio_trainer import BioRLTrainer
 
 if TYPE_CHECKING:
     from .adapters.snn_langchain_adapter import SNNLangChainAdapter
@@ -113,12 +115,46 @@ class TrainingContainer(containers.DeclarativeContainer):
     pi_optimizer = providers.Factory(AdamW, lr=config.training.physics_informed.learning_rate)
     pi_scheduler = providers.Factory(_create_scheduler, optimizer=pi_optimizer, epochs=config.training.epochs, warmup_epochs=config.training.physics_informed.warmup_epochs)
     physics_informed_trainer = providers.Factory(PhysicsInformedTrainer, criterion=providers.Factory(PhysicsInformedLoss, ce_weight=config.training.physics_informed.loss.ce_weight, spike_reg_weight=config.training.physics_informed.loss.spike_reg_weight, mem_smoothness_weight=config.training.physics_informed.loss.mem_smoothness_weight, tokenizer=tokenizer), grad_clip_norm=config.training.physics_informed.grad_clip_norm, use_amp=config.training.physics_informed.use_amp, log_dir=config.training.log_dir, meta_cognitive_snn=meta_cognitive_snn)
-    bio_rl_trainer = providers.Factory(BioRLTrainer, agent=providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device), env=providers.Factory(GridWorldEnv, device=device))
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正: bio_rl_trainerのprovider修正◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+    bio_rl_agent = providers.Factory(ReinforcementLearnerAgent, input_size=4, output_size=4, device=device)
+    grid_world_env = providers.Factory(GridWorldEnv, device=device)
+    bio_rl_trainer = providers.Factory(BioRLTrainer, agent=bio_rl_agent, env=grid_world_env)
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正: bio_rl_trainerのprovider修正◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     particle_filter_trainer = providers.Factory(ParticleFilterTrainer, base_model=providers.Factory(BioSNN, layer_sizes=[10, 5, 2], neuron_params={'tau_mem': 10.0, 'v_threshold': 1.0, 'v_reset': 0.0, 'v_rest': 0.0}, learning_rule=providers.Object(None), sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification), config=config, device=device)
     planner_snn = providers.Factory(PlannerSNN, vocab_size=providers.Callable(len, tokenizer), d_model=config.model.d_model, d_state=config.model.d_state, num_layers=config.model.num_layers, time_steps=config.model.time_steps, n_head=config.model.n_head, num_skills=10, neuron_config=config.model.neuron)
     planner_optimizer = providers.Factory(AdamW, lr=config.training.planner.learning_rate)
     planner_loss = providers.Factory(PlannerLoss)
-    model_registry = providers.Selector(providers.Callable(lambda cfg: cfg.get("model_registry", {}).get("provider"), config.provided), file=providers.Singleton(SimpleModelRegistry, registry_path=config.model_registry.file.path), distributed=providers.Singleton(DistributedModelRegistry, registry_path=config.model_registry.file.path))
+    model_registry: providers.Provider[ModelRegistry] = providers.Selector( # 型ヒント追加
+        providers.Callable(lambda cfg: cfg.get("model_registry", {}).get("provider"), config.provided),
+        file=providers.Singleton(SimpleModelRegistry, registry_path=config.model_registry.file.path),
+        distributed=providers.Singleton(DistributedModelRegistry, registry_path=config.model_registry.file.path)
+    )
+
+    # --- 確率的ヘブ学習用のコンポーネント ---
+    probabilistic_neuron_params: providers.Provider[Dict[str, Any]] = providers.Dict( # 型ヒント追加
+        **config.training.biologically_plausible.probabilistic_neuron
+    )
+    probabilistic_learning_rule: providers.Provider[BioLearningRule] = providers.Factory( # 型ヒント追加
+        ProbabilisticHebbian,
+        **config.training.biologically_plausible.probabilistic_hebbian.to_dict()
+    )
+    probabilistic_model = providers.Factory(
+        BioSNN,
+        layer_sizes=[10, 5, 2],
+        neuron_params=probabilistic_neuron_params,
+        learning_rule=probabilistic_learning_rule,
+        sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification
+    )
+    probabilistic_agent = providers.Factory( # Agent も専用のものが必要になる可能性
+        ReinforcementLearnerAgent, # または ProbabilisticHebbianAgent (新規作成)
+        input_size=4, output_size=4, device=device,
+        # model=probabilistic_model # Agent内でモデルを初期化する場合は不要
+    )
+    probabilistic_trainer = providers.Factory(
+        BioRLTrainer, # または BioProbabilisticTrainer (新規作成)
+        agent=probabilistic_agent,
+        env=grid_world_env
+    )
 
 
 class AgentContainer(containers.DeclarativeContainer):
@@ -139,7 +175,7 @@ class AppContainer(containers.DeclarativeContainer):
     agent_container = providers.Container(AgentContainer, config=config)
     snn_inference_engine = providers.Factory(SNNInferenceEngine, config=config)
     chat_service = providers.Factory(ChatService, snn_engine=snn_inference_engine, max_len=config.app.max_len)
-    langchain_adapter = providers.Factory(SNNLangChainAdapter, snn_engine=snn_inference_engine)
+    langchain_adapter: providers.Provider['SNNLangChainAdapter'] = providers.Factory(SNNLangChainAdapter, snn_engine=snn_inference_engine) # 型ヒント修正
 
 
 class BrainContainer(containers.DeclarativeContainer):
@@ -149,7 +185,7 @@ class BrainContainer(containers.DeclarativeContainer):
 
     global_workspace = providers.Singleton(GlobalWorkspace, model_registry=agent_container.model_registry)
     motivation_system = providers.Singleton(IntrinsicMotivationSystem)
-    
+
     num_neurons = providers.Factory(lambda: 256)
     sensory_receptor = providers.Singleton(SensoryReceptor)
     spike_encoder = providers.Singleton(SpikeEncoder, num_neurons=num_neurons)
@@ -157,7 +193,7 @@ class BrainContainer(containers.DeclarativeContainer):
 
     perception_cortex = providers.Singleton(HybridPerceptionCortex, workspace=global_workspace, num_neurons=num_neurons, feature_dim=64, som_map_size=(8, 8), stdp_params=config.training.biologically_plausible.stdp.to_dict())
     prefrontal_cortex = providers.Singleton(PrefrontalCortex, workspace=global_workspace, motivation_system=motivation_system)
-    
+
     hippocampus = providers.Singleton(Hippocampus, workspace=global_workspace, capacity=50)
     cortex = providers.Singleton(Cortex)
 
@@ -186,7 +222,7 @@ class BrainContainer(containers.DeclarativeContainer):
         motor_cortex=motor_cortex,
         causal_inference_engine=causal_inference_engine
     )
-    
+
     autonomous_agent = providers.Singleton(
         AutonomousAgent,
         name="AutonomousAgent",
@@ -196,12 +232,14 @@ class BrainContainer(containers.DeclarativeContainer):
         web_crawler=agent_container.web_crawler
     )
 
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始 (device参照) ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
     rl_agent = providers.Singleton(
         ReinforcementLearnerAgent,
         input_size=4,
         output_size=4,
-        device=agent_container.device
+        device=agent_container.device # agent_container経由で参照
     )
+    # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり (device参照) ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
     self_evolving_agent = providers.Singleton(
         SelfEvolvingAgent,
@@ -221,38 +259,12 @@ class BrainContainer(containers.DeclarativeContainer):
         rl_agent=rl_agent,
         self_evolving_agent=self_evolving_agent,
         motivation_system=motivation_system,
-        meta_cognitive_snn=providers.Singleton(MetaCognitiveSNN),
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正: meta_cognitive_snn の provider を TrainingContainer から取得◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+        meta_cognitive_snn=agent_container.training_container.meta_cognitive_snn,
+        # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正: meta_cognitive_snn の provider を TrainingContainer から取得◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
         memory=agent_container.memory,
         physics_evaluator=providers.Singleton(PhysicsEvaluator),
         symbol_grounding=providers.Singleton(SymbolGrounding, rag_system=agent_container.rag_system),
         langchain_adapter=app_container.langchain_adapter,
         global_workspace=global_workspace
-    )
-    
-# --- 確率的ヘブ学習用のコンポーネント ---
-    probabilistic_neuron = providers.Factory(
-        ProbabilisticLIFNeuron,
-        neuron_params=config.training.biologically_plausible.probabilistic_neuron # 新しい設定パス
-    )
-    probabilistic_learning_rule = providers.Factory(
-        ProbabilisticHebbian,
-        **config.training.biologically_plausible.probabilistic_hebbian.to_dict() # 新しい設定パス
-    )
-    probabilistic_model = providers.Factory(
-        BioSNN,
-        layer_sizes=[10, 5, 2], # ダミーのサイズ, 実際にはタスクに応じて設定
-        neuron_params=config.training.biologically_plausible.probabilistic_neuron, # 新しい設定パス
-        learning_rule=probabilistic_learning_rule,
-        sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification
-    )
-    # 既存の BioRLTrainer を流用する例 (必要に応じて専用トレーナーを作成)
-    # 注意: BioRLTrainer は強化学習環境を前提としているため、論文の教師なし学習とは異なる可能性がある
-    probabilistic_trainer = providers.Factory(
-        BioRLTrainer, # または BioProbabilisticTrainer (新規作成)
-        agent=providers.Factory( # Agent も専用のものが必要になる可能性
-            ReinforcementLearnerAgent, # または ProbabilisticHebbianAgent (新規作成)
-            input_size=4, output_size=4, device=device,
-            # model=probabilistic_model # Agent内でモデルを初期化するなら不要
-        ),
-        env=providers.Factory(GridWorldEnv, device=device) # 環境もダミー
     )
