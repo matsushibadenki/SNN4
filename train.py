@@ -27,6 +27,7 @@ from scripts.data_preparation import prepare_wikitext_data
 from snn_research.core.snn_core import SNNCore
 from app.utils import get_auto_device
 
+
 # DIコンテナのセットアップ
 container = TrainingContainer()
 
@@ -44,23 +45,34 @@ def train(
     paradigm = config['training']['paradigm']
 
     print(f"🚀 学習パラダイム '{paradigm}' で学習を開始します...")
+    
+    trainer: Union[BreakthroughTrainer, BioRLTrainer, ParticleFilterTrainer]
 
     if paradigm.startswith("bio-"):
         # --- 生物学的学習パラダイムの実行 ---
         if paradigm == "bio-causal-sparse":
             print("🧬 適応的因果スパース化を有効にした強化学習を開始します。")
             container.config.training.biologically_plausible.adaptive_causal_sparsification.enabled.from_value(True)
-            bio_trainer: BioRLTrainer = container.bio_rl_trainer()
-            bio_trainer.train(num_episodes=config['training']['epochs'])
+            trainer = container.bio_rl_trainer()
+            cast(BioRLTrainer, trainer).train(num_episodes=config['training']['epochs'])
         elif paradigm == "bio-particle-filter":
             print("🌪️ パーティクルフィルタによる確率的学習を開始します (CPUベース)。")
             container.config.training.biologically_plausible.particle_filter.enabled.from_value(True)
-            particle_trainer: ParticleFilterTrainer = container.particle_filter_trainer()
+            trainer = container.particle_filter_trainer()
             dummy_data = torch.rand(1, 10, device=device)
             dummy_targets = torch.rand(1, 2, device=device)
             for epoch in range(config['training']['epochs']):
-                loss = particle_trainer.train_step(dummy_data, dummy_targets)
+                loss = cast(ParticleFilterTrainer, trainer).train_step(dummy_data, dummy_targets)
                 print(f"Epoch {epoch+1}/{config['training']['epochs']}: Particle Filter Loss = {loss:.4f}")
+        elif paradigm == "bio-probabilistic-hebbian":
+            print("🧬 確率的ヘブ学習を開始します...")
+            # DIコンテナから確率的トレーナーを取得
+            prob_trainer: BioRLTrainer = container.probabilistic_trainer()
+            # 論文のアルゴリズムは教師なし学習の可能性が高いため、
+            # RLループではなく、データローダーからデータを取得して
+            # モデルの update_weights を直接呼び出す形になるかもしれない
+            # ここでは BioRLTrainer を流用する前提で train を呼び出す
+            prob_trainer.train(num_episodes=config['training']['epochs'])
         else:
             raise ValueError(f"不明な生物学的学習パラダイム: {paradigm}")
 
@@ -125,7 +137,7 @@ def train(
             scheduler = container.scheduler(optimizer=optimizer) if config['training']['probabilistic_ensemble']['use_scheduler'] else None
             trainer_provider = container.probabilistic_ensemble_trainer
 
-        trainer: BreakthroughTrainer = trainer_provider(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
+        trainer = trainer_provider(model=snn_model, optimizer=optimizer, scheduler=scheduler, device=device, rank=rank, astrocyte_network=astrocyte)
 
         if args.load_ewc_data:
             trainer.load_ewc_data(args.load_ewc_data)
@@ -146,14 +158,16 @@ def train(
         # 最終モデルの処理 (量子化、プルーニング)
         if rank in [-1, 0]:
             final_model = trainer.model.module if is_distributed else trainer.model
-            if config.get('training', {}).get('quantization', {}).get('enabled', False):
-                quantized_model = convert_to_quantized_model(final_model.to('cpu'))
-                quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
-                torch.save(quantized_model.state_dict(), quantized_path)
-            if config.get('training', {}).get('pruning', {}).get('enabled', False):
-                pruned_model = apply_magnitude_pruning(final_model, amount=config['training']['pruning'].get('amount', 0.2))
-                pruned_path = os.path.join(config['training']['log_dir'], 'pruned_best_model.pth')
-                torch.save(pruned_model.state_dict(), pruned_path)
+            if isinstance(final_model, nn.Module): # 型ガード
+                if config.get('training', {}).get('quantization', {}).get('enabled', False):
+                    quantized_model = convert_to_quantized_model(final_model.to('cpu'))
+                    quantized_path = os.path.join(config['training']['log_dir'], 'quantized_best_model.pth')
+                    torch.save(quantized_model.state_dict(), quantized_path)
+                if config.get('training', {}).get('pruning', {}).get('enabled', False):
+                    pruning_amount = config['training']['pruning'].get('amount', 0.2)
+                    pruned_model = apply_magnitude_pruning(final_model, amount=pruning_amount)
+                    pruned_path = os.path.join(config['training']['log_dir'], 'pruned_best_model.pth')
+                    torch.save(pruned_model.state_dict(), pruned_path)
 
     else:
         raise ValueError(f"Unknown training paradigm: '{paradigm}'.")
