@@ -1,5 +1,8 @@
-# matsushibadenki/snn4/configs/base_config.yaml
-# プロジェクトの基本設定ファイル
+# ファイルパス: configs/base_config.yaml
+# コードの最も最初には、ファイルパス、ファイルの内容を示したタイトル、機能の説明を詳細に記述してください。 修正内容は記載する必要はありません。
+# Title: プロジェクト基本設定
+# Description: 学習、データ、モデルレジストリなどの基本設定を管理。
+# 改善点(v1): 知識蒸留の学習率を調整し、損失の重みを変更。
 
 # 共通設定
 seed: 42
@@ -15,14 +18,14 @@ data:
 
 # 学習パラメータ設定
 training:
-  paradigm: "physics_informed"
-  epochs: 10
-  batch_size: 8
-  
+  paradigm: "gradient_based" # デフォルトをgradient_basedに変更
+  epochs: 15 # デフォルトのエポック数を増やす
+  batch_size: 16 # バッチサイズを少し増やす
+
   quantization:
     enabled: false
     backend: 'fbgemm'
-    
+
   pruning:
     enabled: false
     amount: 0.2
@@ -37,11 +40,14 @@ training:
     model_path: "runs/planner/best_model.pth"
 
   gradient_based:
-    type: "standard"
-    learning_rate: 0.001
+    type: "distillation" # デフォルトを知識蒸留に
+    # --- ▼ 修正 ▼ ---
+    learning_rate: 0.0005 # 学習率を少し下げる
+    # --- ▲ 修正 ▲ ---
     use_scheduler: true
     grad_clip_norm: 1.0
     use_amp: true
+    warmup_epochs: 2 # ウォームアップエポックを追加
     loss:
       ce_weight: 1.0
       spike_reg_weight: 0.001
@@ -49,35 +55,38 @@ training:
       mem_reg_weight: 0.0
       temporal_compression_weight: 0.001
       sparsity_threshold_reg_weight: 0.0001
-      ewc_weight: 400.0 
+      ewc_weight: 400.0
     distillation:
-      teacher_model: "gpt2"
+      teacher_model: "gpt2" # デフォルト教師 (run_distillation.pyで上書きされる)
       loss:
-        ce_weight: 0.3
-        distill_weight: 0.7
-        spike_reg_weight: 0.001
-        sparsity_reg_weight: 0.00001
+        # --- ▼ 修正 ▼ ---
+        ce_weight: 0.2 # CE損失の重みを少し下げる
+        distill_weight: 0.8 # 蒸留損失の重みを上げる
+        # --- ▲ 修正 ▲ ---
+        spike_reg_weight: 0.0005 # スパイク正則化を少し弱める
+        sparsity_reg_weight: 0.000005 # スパース正則化を少し弱める
         mem_reg_weight: 0.0
-        temporal_compression_weight: 0.001
-        sparsity_threshold_reg_weight: 0.0001
-        temperature: 2.0
+        temporal_compression_weight: 0.0
+        sparsity_threshold_reg_weight: 0.0
+        temperature: 2.5 # 温度を少し上げる
 
+  # (以下、他のパラダイム設定は省略)
   biologically_plausible:
-    learning_rule: "CAUSAL_TRACE" 
+    learning_rule: "CAUSAL_TRACE"
     adaptive_causal_sparsification:
       enabled: false
-      contribution_threshold: 0.01 
+      contribution_threshold: 0.01
     particle_filter:
       enabled: false
-      num_particles: 20 
-      noise_std: 0.05   
+      num_particles: 20
+      noise_std: 0.05
     neuron:
       tau_mem: 10.0
       v_threshold: 1.0
       v_reset: 0.0
       v_rest: 0.0
-      threshold_decay: 0.99 
-      threshold_step: 0.05  
+      threshold_decay: 0.99
+      threshold_step: 0.05
     stdp:
       tau_trace: 20.0
       learning_rate: 0.005
@@ -122,7 +131,7 @@ training:
       ce_weight: 1.0
       spike_reg_weight: 0.01
       mem_smoothness_weight: 0.001
-  
+
   probabilistic_ensemble:
     learning_rate: 0.0007
     use_scheduler: true
@@ -133,10 +142,11 @@ training:
       ce_weight: 1.0
       variance_reg_weight: 0.1
 
+
   log_dir: "runs/snn_experiment"
   eval_interval: 1
   log_interval: 1
-  
+
 model_registry:
   provider: "file"
   file:
