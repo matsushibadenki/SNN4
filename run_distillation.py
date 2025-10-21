@@ -1,4 +1,5 @@
 # ファイルパス: run_distillation.py
+# コードの最も最初には、ファイルパス、ファイルの内容を示したタイトル、機能の説明を詳細に記述してください。 修正内容は記載する必要はありません。
 # Title: 知識蒸留実行スクリプト
 # Description: KnowledgeDistillationManagerを使用して、知識蒸留プロセスを開始します。
 #              設定ファイルとコマンドライン引数からパラメータを読み込みます。
@@ -8,6 +9,7 @@
 # - ANN教師モデルとして、AutoModelForCausalLMの代わりに具体的なANNBaselineModelを
 #   インスタンス化するように修正し、より管理された蒸留プロセスを実現。
 # 改善点(v2): torchvisionのモデルを教師として使用できるようにし、画像データセットに対応。
+# 改善点(v3): エポック数を増やし、学習を促進。
 
 import argparse
 import asyncio
@@ -25,12 +27,19 @@ async def main():
     parser.add_argument("--model_config", type=str, default="configs/cifar10_spikingcnn_config.yaml", help="SNN model architecture config file path")
     parser.add_argument("--task", type=str, default="cifar10", help="The benchmark task to distill.")
     parser.add_argument("--teacher_model", type=str, default="resnet18", help="The torchvision teacher model to use.")
+    # --- ▼ 修正 ▼ ---
+    parser.add_argument("--epochs", type=int, default=15, help="Number of distillation epochs.") # エポック数を増やす
+    # --- ▲ 修正 ▲ ---
     args = parser.parse_args()
 
     # DIコンテナのインスタンス化
     container = TrainingContainer()
     container.config.from_yaml(args.config)
     container.config.from_yaml(args.model_config)
+    # --- ▼ 修正 ▼ ---
+    # コマンドライン引数からエポック数を上書き
+    container.config.training.epochs.from_value(args.epochs)
+    # --- ▲ 修正 ▲ ---
 
     # DIコンテナから必要なコンポーネントを正しい順序で取得・構築
     device = container.device()
@@ -50,7 +59,7 @@ async def main():
         raise ValueError(f"Unsupported teacher model: {args.teacher_model}")
     teacher_model = teacher_model.to(device)
     teacher_model.eval()
-    
+
     distillation_trainer = container.distillation_trainer(
         model=student_model,
         optimizer=optimizer,
@@ -64,7 +73,7 @@ async def main():
         student_model=student_model,
         teacher_model=teacher_model,
         trainer=distillation_trainer,
-        tokenizer_name=container.config.data.tokenizer_name(),
+        tokenizer_name=container.config.data.tokenizer_name(), # tokenizerはCIFARタスクでは使われないがインターフェースのため渡す
         model_registry=model_registry,
         device=device
     )
@@ -89,7 +98,7 @@ async def main():
     await manager.run_distillation(
         train_loader=train_loader,
         val_loader=val_loader,
-        epochs=container.config.training.epochs(),
+        epochs=container.config.training.epochs(), # 設定ファイルからエポック数を取得
         model_id=f"{args.task}_distilled_from_{args.teacher_model}",
         task_description=f"An expert SNN for {args.task}, distilled from {args.teacher_model}.",
         student_config=container.config.model.to_dict()
