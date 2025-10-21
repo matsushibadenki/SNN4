@@ -1,13 +1,14 @@
 # ファイルパス: snn_research/training/losses.py
-# (更新)
-# 改善点(v2): 継続学習のためのElastic Weight Consolidation (EWC) 損失を追加。
-# 改善点(v3): スパース性を促す正則化項(sparsity_reg_weight)を追加し,汎化性能を向上。
-# 改善点(snn_4_ann_parity_plan):
-# - temporal/latency codingの導入として、時間的圧縮を促す正則化項
-#   (temporal_compression_weight)を追加。
-# - Spiking Transformerの自己注意メカニズムのスパース性を適応的に学習させるための
-#   正則化項(sparsity_threshold_reg_weight)を追加。
-# 改善点(TCL): SelfSupervisedLossをTemporal Contrastive Loss (TCL)に再実装。
+# コードの最も最初には、ファイルパス、ファイルの内容を示したタイトル、機能の説明を詳細に記述してください。 修正内容は記載する必要はありません。
+# Title: 損失関数定義
+# Description: CombinedLoss, DistillationLoss, SelfSupervisedLoss (TCL), PhysicsInformedLoss, PlannerLoss, ProbabilisticEnsembleLoss を含む各種損失関数を定義します。
+# 改善点(v1): 継続学習のためのElastic Weight Consolidation (EWC) 損失を追加。
+# 改善点(v2): スパース性を促す正則化項(sparsity_reg_weight)を追加し,汎化性能を向上。
+# 改善点(v3):
+# - temporal/latency codingの導入として、時間的圧縮を促す正則化項 (temporal_compression_weight)を追加。
+# - Spiking Transformerの自己注意メカニズムのスパース性を適応的に学習させるための 正則化項(sparsity_threshold_reg_weight)を追加。
+# 改善点(v4): SelfSupervisedLossをTemporal Contrastive Loss (TCL)に再実装。
+# 修正(v5): DistillationLossのマスク処理を画像分類に対応。
 
 import torch
 import torch.nn as nn
@@ -24,9 +25,9 @@ class CombinedLoss(nn.Module):
         pad_id = tokenizer.pad_token_id
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id if pad_id is not None else -100)
         self.weights = {
-            'ce': ce_weight, 
-            'spike_reg': spike_reg_weight, 
-            'mem_reg': mem_reg_weight, 
+            'ce': ce_weight,
+            'spike_reg': spike_reg_weight,
+            'mem_reg': mem_reg_weight,
             'sparsity_reg': sparsity_reg_weight,
             'temporal_compression': temporal_compression_weight,
             'sparsity_threshold_reg': sparsity_threshold_reg_weight,
@@ -39,14 +40,14 @@ class CombinedLoss(nn.Module):
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor, spikes: torch.Tensor, mem: torch.Tensor, model: nn.Module, **kwargs) -> dict:
         ce_loss = self.ce_loss_fn(logits.view(-1, logits.size(-1)), targets.view(-1))
-        
+
         spike_rate = spikes.mean()
         spike_reg_loss = F.mse_loss(spike_rate, torch.tensor(self.target_spike_rate, device=spike_rate.device))
-        
+
         sparsity_loss = torch.mean(torch.abs(spikes))
 
         mem_reg_loss = torch.mean(mem**2)
-        
+
         temporal_compression_loss = torch.tensor(0.0, device=spikes.device)
         if self.weights['temporal_compression'] > 0 and spikes.ndim > 1 and spikes.shape[1] > 1:
             time_steps = spikes.shape[1]
@@ -75,15 +76,15 @@ class CombinedLoss(nn.Module):
                     fisher = self.fisher_matrix[name].to(param.device)
                     opt_param = self.optimal_params[name].to(param.device)
                     ewc_loss += (fisher * (param - opt_param)**2).sum()
-        
-        total_loss = (self.weights['ce'] * ce_loss + 
+
+        total_loss = (self.weights['ce'] * ce_loss +
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['sparsity_reg'] * sparsity_loss +
                       self.weights['mem_reg'] * mem_reg_loss +
                       self.weights['temporal_compression'] * temporal_compression_loss +
                       self.weights['sparsity_threshold_reg'] * sparsity_threshold_reg_loss +
                       self.weights['ewc'] * ewc_loss)
-        
+
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'spike_reg_loss': spike_reg_loss, 'sparsity_loss': sparsity_loss,
@@ -96,14 +97,14 @@ class CombinedLoss(nn.Module):
 class DistillationLoss(nn.Module):
     """知識蒸留のための損失関数（各種正則化付き）。"""
     def __init__(self, tokenizer: PreTrainedTokenizerBase, ce_weight: float = 0.3, distill_weight: float = 0.7,
-                 spike_reg_weight: float = 0.01, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.00001, 
-                 temporal_compression_weight: float = 0.0, sparsity_threshold_reg_weight: float = 0.0, 
+                 spike_reg_weight: float = 0.01, mem_reg_weight: float = 0.0, sparsity_reg_weight: float = 0.00001,
+                 temporal_compression_weight: float = 0.0, sparsity_threshold_reg_weight: float = 0.0,
                  temperature: float = 2.0, target_spike_rate: float = 0.02, **kwargs):
         super().__init__()
         student_pad_id = tokenizer.pad_token_id
         self.temperature = temperature
         self.weights = {
-            'ce': ce_weight, 'distill': distill_weight, 'spike_reg': spike_reg_weight, 
+            'ce': ce_weight, 'distill': distill_weight, 'spike_reg': spike_reg_weight,
             'mem_reg': mem_reg_weight, 'sparsity_reg': sparsity_reg_weight,
             'temporal_compression': temporal_compression_weight,
             'sparsity_threshold_reg': sparsity_threshold_reg_weight
@@ -115,39 +116,71 @@ class DistillationLoss(nn.Module):
     def forward(self, student_logits: torch.Tensor, teacher_logits: torch.Tensor,
                 targets: torch.Tensor, spikes: torch.Tensor, mem: torch.Tensor, model: nn.Module, attention_mask: Optional[torch.Tensor] = None, **kwargs) -> Dict[str, torch.Tensor]:
 
-        assert student_logits.shape == teacher_logits.shape, \
-            f"Shape mismatch! Student: {student_logits.shape}, Teacher: {teacher_logits.shape}"
+        # --- ▼ 修正 ▼ ---
+        # 形状チェックをタスクタイプに応じて変更
+        is_classification = student_logits.ndim == 2 # (batch_size, num_classes)
+        is_sequence = student_logits.ndim == 3 # (batch_size, seq_len, vocab_size)
 
-        ce_loss = self.ce_loss_fn(student_logits.view(-1, student_logits.size(-1)), targets.view(-1))
-        
+        if is_classification:
+            assert student_logits.shape == teacher_logits.shape, \
+                f"Shape mismatch! Student: {student_logits.shape}, Teacher: {teacher_logits.shape}"
+            assert targets.ndim == 1 and targets.shape[0] == student_logits.shape[0], \
+                f"Target shape mismatch for classification: {targets.shape}, expected ({student_logits.shape[0]},)"
+        elif is_sequence:
+            assert student_logits.shape == teacher_logits.shape, \
+                f"Shape mismatch! Student: {student_logits.shape}, Teacher: {teacher_logits.shape}"
+            assert targets.ndim == 2 and targets.shape == student_logits.shape[:2], \
+                f"Target shape mismatch for sequence: {targets.shape}, expected {student_logits.shape[:2]}"
+        else:
+            raise ValueError(f"Unsupported student_logits shape: {student_logits.shape}")
+
+        # クロスエントロピー損失
+        if is_classification:
+            ce_loss = self.ce_loss_fn(student_logits, targets)
+        else: # is_sequence
+            ce_loss = self.ce_loss_fn(student_logits.view(-1, student_logits.size(-1)), targets.view(-1))
+
+        # 蒸留損失 (KLダイバージェンス)
         soft_student_log_probs = F.log_softmax(student_logits / self.temperature, dim=-1)
         soft_teacher_log_probs = F.log_softmax(teacher_logits / self.temperature, dim=-1)
-        
-        distill_loss_unreduced = self.distill_loss_fn(soft_student_log_probs, soft_teacher_log_probs).sum(dim=-1)
-        
-        if attention_mask is None:
-            mask = (targets != self.ce_loss_fn.ignore_index)
-        else:
-            mask = attention_mask.bool()
-            
-        masked_distill_loss = distill_loss_unreduced.where(mask, torch.tensor(0.0, device=distill_loss_unreduced.device))
-        
-        num_valid_tokens = mask.sum()
+
+        # KLDivLoss(reduction='none') は最後の次元以外を保持する
+        distill_loss_unreduced = self.distill_loss_fn(soft_student_log_probs, soft_teacher_log_probs).sum(dim=-1) # (batch,) or (batch, seq_len)
+
+        # マスクの作成と適用
+        if is_classification:
+            # 分類タスクでは通常マスクは不要だが、インターフェースのため作成 (全要素 True)
+            mask = torch.ones(targets.shape[0], dtype=torch.bool, device=targets.device)
+            num_valid_tokens = targets.shape[0]
+            masked_distill_loss = distill_loss_unreduced # マスク不要
+        else: # is_sequence
+            # テキストタスクのマスク処理
+            if attention_mask is None:
+                mask = (targets != self.ce_loss_fn.ignore_index)
+            else:
+                mask = attention_mask.bool()
+            num_valid_tokens = mask.sum()
+            masked_distill_loss = distill_loss_unreduced.where(mask, torch.tensor(0.0, device=distill_loss_unreduced.device))
+
+        # 損失の平均化
         if num_valid_tokens > 0:
             distill_loss = masked_distill_loss.sum() / num_valid_tokens
         else:
             distill_loss = torch.tensor(0.0, device=student_logits.device)
-            
-        distill_loss = distill_loss * (self.temperature ** 2)
 
+        distill_loss = distill_loss * (self.temperature ** 2)
+        # --- ▲ 修正 ▲ ---
+
+
+        # (以下、正則化項の計算は変更なし)
         spike_rate = spikes.mean()
         target_spike_rate = torch.tensor(self.target_spike_rate, device=spikes.device)
         spike_reg_loss = F.mse_loss(spike_rate, target_spike_rate)
 
         sparsity_loss = torch.mean(torch.abs(spikes))
-        
+
         mem_reg_loss = torch.mean(mem**2)
-        
+
         temporal_compression_loss = torch.tensor(0.0, device=spikes.device)
         if self.weights['temporal_compression'] > 0 and spikes.ndim > 1 and spikes.shape[1] > 1:
             time_steps = spikes.shape[1]
@@ -182,7 +215,8 @@ class DistillationLoss(nn.Module):
             'temporal_compression_loss': temporal_compression_loss,
             'sparsity_threshold_reg_loss': sparsity_threshold_reg_loss
         }
-        
+
+# (SelfSupervisedLoss, PhysicsInformedLoss, PlannerLoss, ProbabilisticEnsembleLoss は変更なし)
 # 修正: SelfSupervisedLossをTemporal Contrastive Learning (TCL)に再実装
 class SelfSupervisedLoss(nn.Module):
     """
@@ -208,33 +242,33 @@ class SelfSupervisedLoss(nn.Module):
     def forward(self, full_hiddens: torch.Tensor, targets: torch.Tensor, spikes: torch.Tensor, mem: torch.Tensor, model: nn.Module, **kwargs) -> dict:
         # full_hiddens: (B, S, T, D) -> Batch, Sequence Length, Time Steps, Dimension
         B, S, T, D = full_hiddens.shape
-        
+
         # 1. Temporal Contrastive Loss (TCL)
         # 埋め込み表現をフラット化: (B * S * T) x D
         hiddens_flat = full_hiddens.permute(0, 1, 2, 3).reshape(B * S * T, D)
-        
+
         # L2正規化
         hiddens_norm = F.normalize(hiddens_flat, p=2, dim=1)
-        
+
         # ポジティブ/ネガティブペアの定義 (時間軸で)
         # アンカー: h_t (時間ステップ 0から T-2 まで)
         # ポジティブ: h_{t+1} (時間ステップ 1から T-1 まで)
         # TCLは時間軸での相関を学習するため、Sequence-Time軸をフラット化して扱う
-        
+
         # Sequence-Time軸を結合: (B * S) x T x D
         hiddens_st = full_hiddens.reshape(B * S, T, D)
-        
+
         # アンカー (h_t): 0からT-2まで
         anchors = hiddens_st[:, :-1, :].reshape(-1, D)
         # ポジティブ (h_{t+1}): 1からT-1まで
         positives = hiddens_st[:, 1:, :].reshape(-1, D)
-        
+
         # スパイクの平均レートも利用して、padされたトークンを無視するマスクを生成
         valid_mask = (targets != self.prediction_loss_fn.ignore_index).view(-1, S)[:, :-1].reshape(-1) # targetsの形状に注意
 
         # 類似度行列 (すべての埋め込み表現間のコサイン類似度)
         similarity_matrix = torch.matmul(anchors, hiddens_norm.T) / self.tcl_temperature
-        
+
         # ポジティブペアのインデックスを特定
         # anchor i のポジティブペアは i 番目の positive
         positive_indices = torch.arange(anchors.size(0), device=anchors.device)
@@ -243,7 +277,7 @@ class SelfSupervisedLoss(nn.Module):
         # 正しいペア (ポジティブ) のスコアが、他のスコアよりも高い確率になるように
         # log_softmax (logits) の結果から、正しいインデックスの項を取り出す
         tcl_loss_unmasked = F.cross_entropy(similarity_matrix, positive_indices, reduction='none')
-        
+
         # 有効なトークンのみの損失を計算
         tcl_loss = (tcl_loss_unmasked * valid_mask.float()).sum() / valid_mask.sum().clamp(min=1)
 
@@ -252,19 +286,19 @@ class SelfSupervisedLoss(nn.Module):
         spike_rate = spikes.mean()
         target_spike_rate = torch.tensor(self.target_spike_rate, device=spikes.device)
         spike_reg_loss = F.mse_loss(spike_rate, target_spike_rate)
-        
+
         mem_reg_loss = torch.mean(mem**2)
-        
+
         # 3. 合計損失
-        total_loss = (self.weights['tcl'] * tcl_loss + 
+        total_loss = (self.weights['tcl'] * tcl_loss +
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['mem_reg'] * mem_reg_loss)
-        
+
         return {
-            'total': total_loss, 
+            'total': total_loss,
             'tcl_loss': tcl_loss, # TCL損失を明示
-            'spike_reg_loss': spike_reg_loss, 
-            'mem_reg_loss': mem_reg_loss, 
+            'spike_reg_loss': spike_reg_loss,
+            'mem_reg_loss': mem_reg_loss,
             'spike_rate': spike_rate
         }
 
@@ -286,10 +320,10 @@ class PhysicsInformedLoss(nn.Module):
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor, spikes: torch.Tensor, mem_sequence: torch.Tensor, model: nn.Module) -> dict:
         ce_loss = self.ce_loss_fn(logits.view(-1, logits.size(-1)), targets.view(-1))
-        
+
         spike_rate = spikes.mean()
         spike_reg_loss = F.mse_loss(spike_rate, torch.tensor(self.target_spike_rate, device=spike_rate.device))
-        
+
         if mem_sequence.numel() > 1:
             mem_diff = torch.diff(mem_sequence)
             mem_smoothness_loss = torch.mean(mem_diff**2)
@@ -299,7 +333,7 @@ class PhysicsInformedLoss(nn.Module):
         total_loss = (self.weights['ce'] * ce_loss +
                       self.weights['spike_reg'] * spike_reg_loss +
                       self.weights['mem_smoothness'] * mem_smoothness_loss)
-        
+
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'spike_reg_loss': spike_reg_loss,
@@ -317,9 +351,9 @@ class PlannerLoss(nn.Module):
 
     def forward(self, predicted_logits: torch.Tensor, target_plan: torch.Tensor) -> Dict[str, torch.Tensor]:
         target = target_plan[:, 0]
-        
+
         loss = self.loss_fn(predicted_logits, target)
-        
+
         return {'total': loss, 'planner_loss': loss}
 
 class ProbabilisticEnsembleLoss(nn.Module):
@@ -335,22 +369,22 @@ class ProbabilisticEnsembleLoss(nn.Module):
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor, spikes: torch.Tensor, mem: torch.Tensor, model: nn.Module, **kwargs) -> dict:
         # logitsは (ensemble_size, batch_size, seq_len, vocab_size) の形状を想定
-        
+
         # 1. クロスエントロピー損失
         # アンサンブル全体で平均したロジットでCE損失を計算
         mean_logits = logits.mean(dim=0)
         ce_loss = self.ce_loss_fn(mean_logits.view(-1, mean_logits.size(-1)), targets.view(-1))
-        
+
         # 2. 分散正則化損失
         # アンサンブル間の出力のばらつき（分散）をペナルティとする
         # softmax後の確率分布の分散を計算
         probs = F.softmax(logits, dim=-1)
         variance = probs.var(dim=0).mean()
         variance_reg_loss = variance
-        
-        total_loss = (self.weights['ce'] * ce_loss + 
+
+        total_loss = (self.weights['ce'] * ce_loss +
                       self.weights['variance_reg'] * variance_reg_loss)
-        
+
         return {
             'total': total_loss, 'ce_loss': ce_loss,
             'variance_reg_loss': variance_reg_loss
