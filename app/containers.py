@@ -8,6 +8,7 @@
 # 修正(v3): mypyエラー[name-defined] (BrainContainer内) を解消するため、agent_container経由でdeviceを参照するように修正。
 # 修正(v4): mypyエラー[attr-defined] (BrainContainer内) を解消するため、agent_container.training_container を TrainingContainer にキャスト。
 # 修正(v5): probabilistic_neuron_params の初期化方法を修正し、TypeErrorを解消。
+# 修正(v6): providers.Dict の代わりに providers.Factory と lambda を使用して TypeError を解消。
 
 import torch
 from dependency_injector import containers, providers
@@ -17,7 +18,7 @@ from transformers import AutoTokenizer
 import os
 # ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↓修正開始◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
 from typing import TYPE_CHECKING, Dict, Any, cast # cast をインポート
-# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️
+# ◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️◾️↑修正終わり◾️◾️◾️◾️◾️◾️◾️◾️◾️
 
 # --- プロジェクト内モジュールのインポート ---
 # (省略... 変更なし)
@@ -133,13 +134,11 @@ class TrainingContainer(containers.DeclarativeContainer):
 
     # --- 確率的ヘブ学習用のコンポーネント ---
     # --- ▼ 修正 ▼ ---
-    probabilistic_neuron_params_dict = providers.Callable(
-        lambda cfg: cfg.training.biologically_plausible.probabilistic_neuron.to_dict() if cfg.training.biologically_plausible.probabilistic_neuron() else {},
-        config.provided
-    )
-    probabilistic_neuron_params: providers.Provider[Dict[str, Any]] = providers.Dict(
-        **probabilistic_neuron_params_dict
-    )
+    # providers.Factory を使用して、インスタンス化時に設定辞書を取得する
+    probabilistic_neuron_params: providers.Provider[Dict[str, Any]] = providers.Factory(
+         lambda cfg: cfg.training.biologically_plausible.probabilistic_neuron.to_dict() if cfg.training.biologically_plausible.probabilistic_neuron() else {},
+         config.provided
+     )
     # --- ▲ 修正 ▲ ---
     probabilistic_learning_rule: providers.Provider[BioLearningRule] = providers.Factory(
         ProbabilisticHebbian,
@@ -148,7 +147,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     probabilistic_model = providers.Factory(
         BioSNN,
         layer_sizes=[10, 5, 2],
-        neuron_params=probabilistic_neuron_params,
+        neuron_params=probabilistic_neuron_params, # Factoryから返される辞書を渡す
         learning_rule=probabilistic_learning_rule,
         sparsification_config=config.training.biologically_plausible.adaptive_causal_sparsification
     )
