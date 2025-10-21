@@ -1,9 +1,13 @@
 # ファイルパス: app/containers.py
-# (修正)
-# - mypyエラー[no-redef]を解消するため、重複していたBrainContainerの定義を統合。
-# - mypyエラー[name-defined]を解消するため、コンテナ間の参照を修正。
-# - mypyエラー[name-defined] (BrainContainer内) を解消するため、agent_container経由でdeviceを参照するように修正。
-# - mypyエラー[attr-defined] (BrainContainer内) を解消するため、agent_container.training_container を TrainingContainer にキャスト。
+# コードの最も最初には、ファイルパス、ファイルの内容を示したタイトル、機能の説明を詳細に記述してください。 修正内容は記載する必要はありません。
+# Title: DIコンテナ定義
+# Description: プロジェクト全体の依存関係注入（DI）を管理するコンテナを定義します。
+#              TrainingContainer, AgentContainer, AppContainer, BrainContainer を含みます。
+# 修正(v1): mypyエラー[no-redef]を解消するため、重複していたBrainContainerの定義を統合。
+# 修正(v2): mypyエラー[name-defined]を解消するため、コンテナ間の参照を修正。
+# 修正(v3): mypyエラー[name-defined] (BrainContainer内) を解消するため、agent_container経由でdeviceを参照するように修正。
+# 修正(v4): mypyエラー[attr-defined] (BrainContainer内) を解消するため、agent_container.training_container を TrainingContainer にキャスト。
+# 修正(v5): probabilistic_neuron_params の初期化方法を修正し、TypeErrorを解消。
 
 import torch
 from dependency_injector import containers, providers
@@ -128,9 +132,15 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
 
     # --- 確率的ヘブ学習用のコンポーネント ---
-    probabilistic_neuron_params: providers.Provider[Dict[str, Any]] = providers.Dict(
-        **config.training.biologically_plausible.probabilistic_neuron
+    # --- ▼ 修正 ▼ ---
+    probabilistic_neuron_params_dict = providers.Callable(
+        lambda cfg: cfg.training.biologically_plausible.probabilistic_neuron.to_dict() if cfg.training.biologically_plausible.probabilistic_neuron() else {},
+        config.provided
     )
+    probabilistic_neuron_params: providers.Provider[Dict[str, Any]] = providers.Dict(
+        **probabilistic_neuron_params_dict
+    )
+    # --- ▲ 修正 ▲ ---
     probabilistic_learning_rule: providers.Provider[BioLearningRule] = providers.Factory(
         ProbabilisticHebbian,
         **config.training.biologically_plausible.probabilistic_hebbian.to_dict()
@@ -153,6 +163,7 @@ class TrainingContainer(containers.DeclarativeContainer):
     )
 
 
+# (AgentContainer, AppContainer, BrainContainer の定義は変更なし)
 class AgentContainer(containers.DeclarativeContainer):
     config = providers.Configuration()
     training_container: providers.Provider[TrainingContainer] = providers.Container(TrainingContainer, config=config) # 型ヒント追加
